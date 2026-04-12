@@ -71,6 +71,8 @@ final class GameState: ObservableObject {
     @Published var lastEnteredNicknames = ["", "", "", ""]
     @Published var isMatchFinished = false
     
+    let multipleRonRule = MultipleRonRule.commonOnlinePlatform
+    
     init() {
         players = initialPlayers
     }
@@ -146,16 +148,23 @@ final class GameState: ObservableObject {
         }
         guard !validSettlements.isEmpty else { return false }
         
+        let orderedWinnerIndices = multipleRonRule.orderedWinnerIndices(
+            loserIndex: loserIndex,
+            winnerIndices: validSettlements.map(\.winnerIndex),
+            playerCount: players.count
+        )
         let anyEastWinner = validSettlements.contains { isEastPlayer($0.winnerIndex) }
         let dealerChanged = !anyEastWinner
         let riichiBonus = riichiStickCount * 1000
+        let honbaBonus = honbaCount * 300
         
         for settlement in validSettlements {
-            players[settlement.winnerIndex].score += settlement.points
+            let isHeadWinner = orderedWinnerIndices.first == settlement.winnerIndex
+            let extraGain = isHeadWinner ? (riichiBonus + honbaBonus) : 0
+            players[settlement.winnerIndex].score += settlement.points + extraGain
         }
         
-        players[validSettlements[0].winnerIndex].score += riichiBonus
-        players[loserIndex].score -= validSettlements.reduce(0) { $0 + $1.points }
+        players[loserIndex].score -= validSettlements.reduce(0) { $0 + $1.points } + honbaBonus
         
         riichiStickCount = 0
         advanceRoundAfterRonWinners(anyEastWinner: anyEastWinner)
@@ -302,8 +311,14 @@ final class GameState: ObservableObject {
     ) -> [FormalScoreResult] {
         guard !isMatchFinished else { return [] }
         guard players.indices.contains(losersIndex) else { return [] }
-        
-        return winnerInputs.compactMap { input in
+
+        let orderedWinnerIndices = multipleRonRule.orderedWinnerIndices(
+            loserIndex: losersIndex,
+            winnerIndices: winnerInputs.map(\.winnerIndex),
+            playerCount: players.count
+        )
+
+        let rawResults = winnerInputs.compactMap { input in
             calculateFormalScore(
                 winnerIndex: input.winnerIndex,
                 loserIndex: losersIndex,
@@ -312,6 +327,22 @@ final class GameState: ObservableObject {
                 fu: input.fu,
                 yakumanMultiplier: input.yakumanMultiplier
             )
+        }
+
+        return orderedWinnerIndices.compactMap { winnerIndex in
+            guard var result = rawResults.first(where: { $0.winnerIndex == winnerIndex }) else {
+                return nil
+            }
+
+            let isHeadWinner = orderedWinnerIndices.first == winnerIndex
+            if !isHeadWinner {
+                let honbaBonus = result.honbaCount * 300
+                result.winnerGain -= honbaBonus + result.riichiBonus
+                result.loserPayment = (result.loserPayment ?? 0) - honbaBonus
+                result.honbaCount = 0
+                result.riichiStickCount = 0
+            }
+            return result
         }
     }
     
@@ -329,9 +360,8 @@ final class GameState: ObservableObject {
         let dealerChanged = !anyEastWinner
         let totalPayment = results.reduce(0) { $0 + ($1.loserPayment ?? 0) }
         
-        for (offset, result) in results.enumerated() {
-            let gain = result.winnerGain - (offset == 0 ? 0 : result.riichiBonus)
-            players[result.winnerIndex].score += gain
+        for result in results {
+            players[result.winnerIndex].score += result.winnerGain
         }
         
         players[loserIndex].score -= totalPayment

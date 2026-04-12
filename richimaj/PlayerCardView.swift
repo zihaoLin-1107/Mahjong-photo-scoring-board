@@ -12,15 +12,25 @@ struct CompetitiveTimerDisplay {
     var reserveTime: Int
 }
 
+enum BoardSeatPosition {
+    case bottom
+    case right
+    case top
+    case left
+}
+
 struct PlayerCardView: View {
     let player: PlayerScore
     let onRiichi: () -> Void
+    var boardPosition: BoardSeatPosition = .bottom
     var canRiichi = true
     var compactLayout = false
     var timerDisplay: CompetitiveTimerDisplay? = nil
     var showCompetitiveChrome = false
     var leftActionTitle: String? = nil
     var onLeftAction: (() -> Void)? = nil
+    var callActionTitle: String? = nil
+    var onCallAction: (() -> Void)? = nil
     var showStartButton = false
     var onStartTurn: (() -> Void)? = nil
     var showFinishButton = false
@@ -108,9 +118,11 @@ struct PlayerCardView: View {
     var timerPanelWidth: CGFloat { leftAssistantWidth * 0.66 }
     var leftActionWidth: CGFloat { leftAssistantWidth * 0.34 }
     var assistantHeight: CGFloat { compactLayout ? 50 : 56 }
+    var assistantDropOffset: CGFloat { compactLayout ? 6 : 8 }
     var actionButtonSize: CGFloat { compactLayout ? 44 : 50 }
     var actionButtonFrame: CGFloat { compactLayout ? 48 : 56 }
     var competitiveCenterOffset: CGFloat { -(leftAssistantWidth - actionButtonFrame) / 2 }
+    var callButtonSize: CGFloat { compactLayout ? 38 : 44 }
 
     @ViewBuilder
     var leftAssistantArea: some View {
@@ -130,6 +142,7 @@ struct PlayerCardView: View {
             }
         }
         .frame(width: leftAssistantWidth)
+        .offset(y: assistantDropOffset)
     }
     
     func timerPanel(_ timerDisplay: CompetitiveTimerDisplay) -> some View {
@@ -201,6 +214,8 @@ struct PlayerCardView: View {
                 }
         } else if showFinishButton, let onFinishTurn {
             finishButton(action: onFinishTurn)
+        } else if let callActionTitle, let onCallAction {
+            callButton(title: callActionTitle, action: onCallAction)
         } else {
             Color.clear
                 .frame(width: actionButtonFrame, height: actionButtonFrame)
@@ -222,6 +237,56 @@ struct PlayerCardView: View {
         }
         .buttonStyle(.plain)
         .frame(width: actionButtonFrame, height: actionButtonFrame)
+    }
+
+    func callButton(title: String, action: @escaping () -> Void) -> some View {
+        let localOffset = callButtonLocalOffset()
+        return Button {
+            action()
+        } label: {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: 0.37, green: 0.59, blue: 0.93))
+                .frame(width: callButtonSize, height: callButtonSize)
+                .overlay {
+                    Text(title)
+                        .font(compactLayout ? .subheadline : .headline)
+                        .foregroundColor(.white)
+                        .bold()
+                        .minimumScaleFactor(0.7)
+                }
+        }
+        .buttonStyle(.plain)
+        .frame(width: actionButtonFrame, height: actionButtonFrame)
+        .offset(x: localOffset.width, y: localOffset.height)
+    }
+
+    func callButtonLocalOffset() -> CGSize {
+        let horizontalInset = actionButtonFrame * 0.18
+        let verticalInset = actionButtonFrame * 0.18
+        let desiredScreenOffset: CGSize
+        switch boardPosition {
+        case .bottom:
+            desiredScreenOffset = CGSize(width: -horizontalInset, height: verticalInset)
+        case .top:
+            desiredScreenOffset = CGSize(width: horizontalInset, height: verticalInset)
+        case .left:
+            // Left seat is rotated +90deg, so moving toward the score card means
+            // screen-right and slightly upward.
+            desiredScreenOffset = CGSize(width: horizontalInset, height: -verticalInset)
+        case .right:
+            desiredScreenOffset = CGSize(width: -horizontalInset, height: verticalInset)
+        }
+
+        switch boardPosition {
+        case .bottom:
+            return desiredScreenOffset
+        case .top:
+            return CGSize(width: -desiredScreenOffset.width, height: -desiredScreenOffset.height)
+        case .left:
+            return CGSize(width: desiredScreenOffset.height, height: -desiredScreenOffset.width)
+        case .right:
+            return CGSize(width: -desiredScreenOffset.height, height: desiredScreenOffset.width)
+        }
     }
     
     @ViewBuilder

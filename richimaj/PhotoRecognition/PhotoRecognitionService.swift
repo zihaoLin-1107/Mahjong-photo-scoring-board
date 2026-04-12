@@ -30,6 +30,7 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
             result = PhotoRecognitionResult(
                 source: request.source,
                 suggestedPattern: .standard,
+                regionResults: [],
                 tileGroups: [
                     PhotoTileGroup(
                         title: "手牌",
@@ -47,12 +48,17 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
                     )
                 ],
                 confidence: 0.65,
-                notes: ["未指定牌型提示时，先返回一组通用 mock 识别结果。"]
+                notes: ["未指定牌型提示时，先返回一组通用 mock 识别结果。"],
+                postProcessWarnings: [],
+                isStructurallyValid: true,
+                croppedTileCount: 0,
+                createdAt: .now
             )
         case .standard:
             result = PhotoRecognitionResult(
                 source: request.source,
                 suggestedPattern: .standard,
+                regionResults: [],
                 tileGroups: [
                     PhotoTileGroup(
                         title: "手牌",
@@ -75,12 +81,17 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
                 notes: [
                     "这是 mock 结果，后续可以替换成真实图像识别服务。",
                     "当前只保留牌型结构骨架，不做实际 CV 推理。"
-                ]
+                ],
+                postProcessWarnings: [],
+                isStructurallyValid: true,
+                croppedTileCount: 0,
+                createdAt: .now
             )
         case .sevenPairs:
             result = PhotoRecognitionResult(
                 source: request.source,
                 suggestedPattern: .sevenPairs,
+                regionResults: [],
                 tileGroups: [
                     PhotoTileGroup(
                         title: "手牌",
@@ -100,12 +111,17 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
                     )
                 ],
                 confidence: 0.77,
-                notes: ["示例按七对子组织，方便后续接入正式算分。"]
+                notes: ["示例按七对子组织，方便后续接入正式算分。"],
+                postProcessWarnings: [],
+                isStructurallyValid: true,
+                croppedTileCount: 0,
+                createdAt: .now
             )
         case .kokushi:
             result = PhotoRecognitionResult(
                 source: request.source,
                 suggestedPattern: .kokushi,
+                regionResults: [],
                 tileGroups: [
                     PhotoTileGroup(
                         title: "手牌",
@@ -123,12 +139,17 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
                     )
                 ],
                 confidence: 0.88,
-                notes: ["示例按国士无双组织，后续可进一步接入十三面判断。"]
+                notes: ["示例按国士无双组织，后续可进一步接入十三面判断。"],
+                postProcessWarnings: [],
+                isStructurallyValid: true,
+                croppedTileCount: 0,
+                createdAt: .now
             )
         case .triplet:
             result = PhotoRecognitionResult(
                 source: request.source,
                 suggestedPattern: .triplet,
+                regionResults: [],
                 tileGroups: [
                     PhotoTileGroup(
                         title: "手牌",
@@ -146,7 +167,11 @@ struct MockPhotoRecognitionService: PhotoRecognitionService {
                     )
                 ],
                 confidence: 0.79,
-                notes: ["示例按对对和组织，适合作为手动校正的起点。"]
+                notes: ["示例按对对和组织，适合作为手动校正的起点。"],
+                postProcessWarnings: [],
+                isStructurallyValid: true,
+                croppedTileCount: 0,
+                createdAt: .now
             )
         }
         

@@ -6,13 +6,17 @@ struct PhotoRecognitionView: View {
     @StateObject private var viewModel: PhotoRecognitionViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingCameraPicker = false
+    @State private var autoForwardedResultID: UUID?
+    var context: PhotoRecognitionContext? = nil
     var onConfirmResult: ((PhotoRecognitionResult) -> Void)? = nil
     
     init(
         viewModel: PhotoRecognitionViewModel = PhotoRecognitionViewModel(),
+        context: PhotoRecognitionContext? = nil,
         onConfirmResult: ((PhotoRecognitionResult) -> Void)? = nil
     ) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.context = context
         self.onConfirmResult = onConfirmResult
     }
     
@@ -38,7 +42,7 @@ struct PhotoRecognitionView: View {
             .ignoresSafeArea()
         )
         .navigationTitle("拍照识别")
-        .sheet(isPresented: $showingCameraPicker) {
+        .fullScreenCover(isPresented: $showingCameraPicker) {
             CameraImagePicker { data in
                 viewModel.updateImageData(data)
             }
@@ -52,14 +56,30 @@ struct PhotoRecognitionView: View {
                 }
             }
         }
+        .onChange(of: viewModel.result?.id) { _, newValue in
+            guard
+                viewModel.request.source == .camera || viewModel.request.source == .photoLibrary,
+                let onConfirmResult,
+                let result = viewModel.result,
+                let resultID = newValue,
+                autoForwardedResultID != resultID
+            else { return }
+            autoForwardedResultID = resultID
+            onConfirmResult(result)
+        }
+    }
+
+    var selectedPreviewImage: UIImage? {
+        guard let data = viewModel.request.imageData else { return nil }
+        return UIImage(data: data)
     }
     
     var headerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("拍照识别骨架")
+            Text("拍照识别")
                 .font(.largeTitle)
                 .bold()
-            Text("这里先放独立识别流程，不干扰主记分和正式算分。后续把真实 Vision / 拍照接进来时，只替换服务层即可。")
+            Text("目标是从整张照片里拆出手牌、胡牌和副露，再回填到现有算分流程。")
                 .font(.footnote)
                 .foregroundColor(.secondary)
         }
@@ -97,14 +117,13 @@ struct PhotoRecognitionView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-            }
-            
-            Picker("牌型提示", selection: $viewModel.request.handPatternHint) {
-                ForEach(PhotoHandPatternSuggestion.allCases) { pattern in
-                    Text(pattern.rawValue).tag(pattern)
+            } else if viewModel.request.source == .sample {
+                Button(viewModel.hasSelectedLocalImage ? "重新载入示例照片" : "载入示例测试照片") {
+                    selectedPhotoItem = nil
+                    viewModel.loadSample()
                 }
+                .buttonStyle(.borderedProminent)
             }
-            .pickerStyle(.menu)
             
             TextField("备注，例如：门前手 / 七对子 / 国士无双", text: $viewModel.request.note)
                 .textFieldStyle(.roundedBorder)
@@ -113,6 +132,23 @@ struct PhotoRecognitionView: View {
                 Text("已载入本地图像，开始识别时会优先走设备本地 Vision 分析。")
                     .font(.footnote)
                     .foregroundColor(.secondary)
+            }
+
+            if let previewImage = selectedPreviewImage {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(viewModel.request.source == .sample ? "测试照片预览" : "当前图片预览")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Image(uiImage: previewImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                        )
+                }
             }
         }
         .padding()
@@ -150,27 +186,23 @@ struct PhotoRecognitionView: View {
         if let result = viewModel.result {
             VStack(alignment: .leading, spacing: 12) {
                 sectionTitle("识别结果")
-                
-                infoRow(title: "建议牌型", value: result.suggestedPattern.rawValue)
-                infoRow(title: "置信度", value: String(format: "%.0f%%", result.confidence * 100))
-                infoRow(title: "总牌数", value: "\(result.totalTileCount)")
-                infoRow(title: "裁切牌面数", value: "\(result.croppedTileCount)")
-                
-                ForEach(result.tileGroups) { group in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(group.title)
-                            .font(.headline)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(group.tiles) { tile in
-                                    tileChip(tile)
-                                }
-                            }
+                if let context {
+                    resultSummaryCard(result: result, context: context)
+                }
+
+                postProcessStatusCard(result: result)
+
+                if !result.regionResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionTitle("三区域裁剪调试")
+                        ForEach(result.regionResults) { region in
+                            regionDebugCard(region)
                         }
                     }
-                    .padding()
-                    .background(Color.white.opacity(0.78))
-                    .cornerRadius(14)
+                }
+
+                ForEach(result.tileGroups) { group in
+                    tileGroupCard(group)
                 }
                 
                 if !result.notes.isEmpty {
@@ -189,7 +221,7 @@ struct PhotoRecognitionView: View {
                 }
 
                 if let onConfirmResult {
-                    Button("确认并返回算分") {
+                    Button(result.isStructurallyValid ? "进入确认/微调" : "继续手动修正") {
                         onConfirmResult(result)
                     }
                     .buttonStyle(.borderedProminent)
@@ -198,7 +230,7 @@ struct PhotoRecognitionView: View {
         } else {
             infoCard(
                 title: "结果预览",
-                content: "先选一个来源，再点“开始识别”。现在这里是 mock 流程，不影响主记分板。"
+                content: "先选择拍照、相册或示例，再点“开始识别”。识别后会按手牌、副露、胡牌三块区域展示麻将牌。"
             )
         }
     }
@@ -233,28 +265,212 @@ struct PhotoRecognitionView: View {
         }
     }
     
-    func tileChip(_ tile: PhotoTileToken) -> some View {
-        VStack(spacing: 4) {
-            Text(tile.displayName)
-                .font(.headline)
+    func tileCard(_ tile: PhotoTileToken) -> some View {
+        VStack(spacing: 2) {
+            photoTileFace(tile)
+                .frame(height: 58)
             Text(tile.subtitle)
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
-        .frame(minWidth: 58)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(red: 0.99, green: 0.98, blue: 0.95))
+        .frame(width: 44, height: 82)
+        .background(Color.white)
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                .stroke(Color.gray.opacity(0.18), lineWidth: 1)
         }
         .cornerRadius(10)
+        .shadow(color: Color.black.opacity(0.04), radius: 2, x: 0, y: 1)
     }
-}
 
-#Preview {
-    NavigationStack {
-        PhotoRecognitionView()
+    func tileGroupCard(_ group: PhotoTileGroup) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(group.title)
+                .font(.headline)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(group.tiles) { tile in
+                        tileCard(tile)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.78))
+        .cornerRadius(14)
+    }
+
+    func regionDebugCard(_ region: PhotoRecognitionRegionResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(region.regionTitle)
+                    .font(.headline)
+                Spacer()
+                Text("识别 \(region.tileCount) 张")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if let data = region.previewImageData,
+               let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.gray.opacity(0.16), lineWidth: 1)
+                    )
+            }
+
+            if region.tiles.isEmpty {
+                Text("当前区域还没有识别出稳定的牌。")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(region.tiles) { tile in
+                            tileCard(tile)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.78))
+        .cornerRadius(14)
+    }
+
+    func resultSummaryCard(result: PhotoRecognitionResult, context: PhotoRecognitionContext) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                compactMetric(title: "当前局", detail: context.roundText)
+                compactMetric(title: "本场", detail: "\(context.honbaCount)")
+                compactMetric(title: "立直棒", detail: "\(context.riichiStickCount)")
+                compactMetric(title: "胡牌者", detail: context.winnerIdentity)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("役种识别")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(result.suggestedPattern.rawValue)
+                    .font(.headline)
+                    .bold()
+                Text("共识别 \(result.totalTileCount) 张牌 · 置信度 \(String(format: "%.0f%%", result.confidence * 100))")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.78))
+        .cornerRadius(14)
+    }
+
+    @ViewBuilder
+    func postProcessStatusCard(result: PhotoRecognitionResult) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("后处理状态")
+                    .font(.headline)
+                Spacer()
+                if let onConfirmResult, !result.isStructurallyValid {
+                    Button("结构待修正") {
+                        onConfirmResult(result)
+                    }
+                    .font(.caption)
+                    .bold()
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.orange.opacity(0.14))
+                    .cornerRadius(999)
+                    .buttonStyle(.plain)
+                } else {
+                    Text(result.isStructurallyValid ? "结构合理" : "结构待修正")
+                        .font(.caption)
+                        .bold()
+                        .foregroundColor(result.isStructurallyValid ? Color.green : Color.orange)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background((result.isStructurallyValid ? Color.green : Color.orange).opacity(0.14))
+                        .cornerRadius(999)
+                }
+            }
+
+            if result.postProcessWarnings.isEmpty {
+                Text("当前三块区域没有触发额外约束修正。")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(result.postProcessWarnings, id: \.self) { warning in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .padding(.top, 2)
+                        Text(warning)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.78))
+        .cornerRadius(14)
+    }
+
+    func compactMetric(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(detail)
+                .font(.subheadline)
+                .bold()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    func photoTileFace(_ tile: PhotoTileToken) -> some View {
+        if let assetName = tileAssetName(for: tile), UIImage(named: assetName) != nil {
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Text(tile.displayName)
+                .font(.headline)
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    func tileAssetName(for tile: PhotoTileToken) -> String? {
+        switch tile.suit {
+        case .man:
+            guard let rank = tile.rank else { return nil }
+            return "mahjong_man\(rank)"
+        case .pin:
+            guard let rank = tile.rank else { return nil }
+            return "mahjong_pin\(rank)"
+        case .sou:
+            guard let rank = tile.rank else { return nil }
+            return "mahjong_sou\(rank)"
+        case .honor:
+            switch tile.honorName {
+            case "东": return "mahjong_east"
+            case "南": return "mahjong_south"
+            case "西": return "mahjong_west"
+            case "北": return "mahjong_north"
+            case "白": return "mahjong_white"
+            case "发": return "mahjong_green"
+            case "中": return "mahjong_red"
+            default: return nil
+            }
+        }
     }
 }

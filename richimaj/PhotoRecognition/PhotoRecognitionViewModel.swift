@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 final class PhotoRecognitionViewModel: ObservableObject {
     @Published var request = PhotoRecognitionRequest()
@@ -10,8 +11,18 @@ final class PhotoRecognitionViewModel: ObservableObject {
     
     private let service: any PhotoRecognitionService
     
-    init(service: any PhotoRecognitionService = LocalVisionPhotoRecognitionService()) {
-        self.service = service
+    init(service: (any PhotoRecognitionService)? = nil) {
+        if let service {
+            self.service = service
+        } else if Self.isRunningInPreviews {
+            self.service = MockPhotoRecognitionService()
+        } else {
+            self.service = LocalVisionPhotoRecognitionService()
+        }
+    }
+
+    private static var isRunningInPreviews: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
     
     func recognize() {
@@ -39,11 +50,18 @@ final class PhotoRecognitionViewModel: ObservableObject {
     
     func loadSample() {
         request.source = .sample
-        request.handPatternHint = .standard
-        request.note = "示例手牌"
-        request.imageData = nil
-        hasSelectedLocalImage = false
+        request.handPatternHint = .unknown
+        request.note = "示例测试照片"
+        if let image = UIImage(named: "photo_sample_wechat"),
+           let data = image.jpegData(compressionQuality: 0.95) {
+            request.imageData = data
+            hasSelectedLocalImage = true
+        } else {
+            request.imageData = nil
+            hasSelectedLocalImage = false
+        }
         errorMessage = nil
+        result = nil
     }
     
     func updateImageData(_ data: Data?) {

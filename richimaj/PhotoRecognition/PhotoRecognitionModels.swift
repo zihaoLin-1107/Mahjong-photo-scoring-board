@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum PhotoRecognitionSource: String, CaseIterable, Identifiable {
     case camera = "拍照"
@@ -63,6 +64,19 @@ struct PhotoTileGroup: Identifiable, Hashable {
     var tiles: [PhotoTileToken]
 }
 
+struct PhotoRecognitionRegionResult: Identifiable, Hashable {
+    let id = UUID()
+    var regionKey: String
+    var regionTitle: String
+    var tiles: [PhotoTileToken]
+    var confidence: Double
+    var previewImageData: Data? = nil
+    
+    var tileCount: Int {
+        tiles.count
+    }
+}
+
 struct PhotoRecognitionRequest: Hashable {
     var source: PhotoRecognitionSource = .sample
     var handPatternHint: PhotoHandPatternSuggestion = .unknown
@@ -70,17 +84,62 @@ struct PhotoRecognitionRequest: Hashable {
     var imageData: Data? = nil
 }
 
+struct PhotoRecognitionContext: Hashable {
+    var roundText: String
+    var honbaCount: Int
+    var riichiStickCount: Int
+    var winnerIdentity: String
+}
+
 struct PhotoRecognitionResult: Identifiable, Hashable {
     let id = UUID()
     var source: PhotoRecognitionSource
     var suggestedPattern: PhotoHandPatternSuggestion
+    var regionResults: [PhotoRecognitionRegionResult]
     var tileGroups: [PhotoTileGroup]
     var confidence: Double
     var notes: [String]
-    var croppedTileCount: Int = 0
-    var createdAt: Date = .now
+    var postProcessWarnings: [String]
+    var isStructurallyValid: Bool
+    var croppedTileCount: Int
+    var createdAt: Date
+    
+    init(
+        source: PhotoRecognitionSource,
+        suggestedPattern: PhotoHandPatternSuggestion,
+        regionResults: [PhotoRecognitionRegionResult],
+        tileGroups: [PhotoTileGroup],
+        confidence: Double,
+        notes: [String],
+        postProcessWarnings: [String],
+        isStructurallyValid: Bool,
+        croppedTileCount: Int,
+        createdAt: Date
+    ) {
+        self.source = source
+        self.suggestedPattern = suggestedPattern
+        self.regionResults = regionResults
+        self.tileGroups = tileGroups
+        self.confidence = confidence
+        self.notes = notes
+        self.postProcessWarnings = postProcessWarnings
+        self.isStructurallyValid = isStructurallyValid
+        self.croppedTileCount = croppedTileCount
+        self.createdAt = createdAt
+    }
     
     var totalTileCount: Int {
         tileGroups.reduce(0) { $0 + $1.tiles.count }
+    }
+    
+    var logicPayloadLines: [String] {
+        let regionLines = regionResults.map { region in
+            let tileText = region.tiles.map(\.displayName).joined(separator: " ")
+            return "\(region.regionTitle)：\(tileText)"
+        }
+        return regionLines.isEmpty ? tileGroups.map { group in
+            let tileText = group.tiles.map(\.displayName).joined(separator: " ")
+            return "\(group.title)：\(tileText)"
+        } : regionLines
     }
 }

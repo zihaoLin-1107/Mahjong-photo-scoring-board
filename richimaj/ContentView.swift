@@ -9,6 +9,190 @@ import SwiftUI
 import Combine
 import UIKit
 
+struct PatternDetectionResult {
+    var han: Int
+    var fu: Int
+    var yakuNames: [String]
+    var notes: [String]
+    var yakumanMultiplier: Int = 0
+}
+
+enum TileInputSection: String, CaseIterable, Identifiable {
+    case concealed = "手牌"
+    case openMeld = "副露"
+    case winning = "胡牌"
+    
+    var id: String { rawValue }
+}
+
+enum CircumstantialYaku: String, CaseIterable, Hashable, Identifiable {
+    case ippatsu = "一发"
+    case haitei = "海底捞月"
+    case houtei = "河底捞鱼"
+    case rinshan = "岭上开花"
+    case chankan = "抢杠"
+
+    var id: String { rawValue }
+}
+
+enum RiichiYakuKind: String, CaseIterable, Hashable {
+    case none
+    case riichi = "立直"
+    case doubleRiichi = "双立直"
+
+    var yakuName: String? {
+        switch self {
+        case .none: return nil
+        case .riichi: return "立直"
+        case .doubleRiichi: return "双立直"
+        }
+    }
+
+    var hanValue: Int {
+        switch self {
+        case .none: return 0
+        case .riichi: return 1
+        case .doubleRiichi: return 2
+        }
+    }
+}
+
+enum MahjongTile: Int, CaseIterable, Identifiable, Hashable {
+    case man1, man2, man3, man4, man5, man6, man7, man8, man9
+    case pin1, pin2, pin3, pin4, pin5, pin6, pin7, pin8, pin9
+    case sou1, sou2, sou3, sou4, sou5, sou6, sou7, sou8, sou9
+    case east, south, west, north, white, green, red
+    
+    var id: Int { rawValue }
+    
+    var label: String {
+        switch self {
+        case .man1: return "1万"
+        case .man2: return "2万"
+        case .man3: return "3万"
+        case .man4: return "4万"
+        case .man5: return "5万"
+        case .man6: return "6万"
+        case .man7: return "7万"
+        case .man8: return "8万"
+        case .man9: return "9万"
+        case .pin1: return "1筒"
+        case .pin2: return "2筒"
+        case .pin3: return "3筒"
+        case .pin4: return "4筒"
+        case .pin5: return "5筒"
+        case .pin6: return "6筒"
+        case .pin7: return "7筒"
+        case .pin8: return "8筒"
+        case .pin9: return "9筒"
+        case .sou1: return "1索"
+        case .sou2: return "2索"
+        case .sou3: return "3索"
+        case .sou4: return "4索"
+        case .sou5: return "5索"
+        case .sou6: return "6索"
+        case .sou7: return "7索"
+        case .sou8: return "8索"
+        case .sou9: return "9索"
+        case .east: return "东"
+        case .south: return "南"
+        case .west: return "西"
+        case .north: return "北"
+        case .white: return "白"
+        case .green: return "发"
+        case .red: return "中"
+        }
+    }
+    
+    var suitTitle: String {
+        switch self {
+        case .man1, .man2, .man3, .man4, .man5, .man6, .man7, .man8, .man9:
+            return "万"
+        case .pin1, .pin2, .pin3, .pin4, .pin5, .pin6, .pin7, .pin8, .pin9:
+            return "饼"
+        case .sou1, .sou2, .sou3, .sou4, .sou5, .sou6, .sou7, .sou8, .sou9:
+            return "条"
+        default:
+            return "字"
+        }
+    }
+    
+    var isHonor: Bool {
+        rawValue >= 27
+    }
+    
+    var isTerminal: Bool {
+        guard !isHonor else { return false }
+        let number = rawValue % 9 + 1
+        return number == 1 || number == 9
+    }
+    
+    var isTerminalOrHonor: Bool {
+        isHonor || isTerminal
+    }
+    
+    var suitIndex: Int? {
+        if rawValue < 27 {
+            return rawValue / 9
+        }
+        return nil
+    }
+    
+    var number: Int? {
+        guard !isHonor else { return nil }
+        return rawValue % 9 + 1
+    }
+    
+    static var groupedTiles: [[MahjongTile]] {
+        [
+            Array(allCases[0...8]),
+            Array(allCases[9...17]),
+            Array(allCases[18...26]),
+            Array(allCases[27...33])
+        ]
+    }
+}
+
+enum HandGroupKind {
+    case sequence
+    case triplet
+}
+
+struct HandGroup {
+    var kind: HandGroupKind
+    var tiles: [Int]
+}
+
+enum WaitKind {
+    case ryanmen
+    case kanchan
+    case penchan
+    case tanki
+    case shanpon
+}
+
+struct StandardHandCandidate {
+    var pairTile: Int
+    var groups: [HandGroup]
+    var waitKind: WaitKind
+}
+
+struct HandAnalysisContext {
+    var openMeldGroups: [OpenMeldGroup]
+    
+    var openHandGroups: [HandGroup] {
+        openMeldGroups.compactMap(\.handGroup)
+    }
+    
+    var openTripletLikeCount: Int {
+        openHandGroups.filter { $0.kind == .triplet }.count
+    }
+    
+    var openSequenceCount: Int {
+        openHandGroups.filter { $0.kind == .sequence }.count
+    }
+}
+
 enum AppMode: String {
     case casual = "休闲模式"
     case competitive = "竞技模式"
@@ -19,11 +203,19 @@ struct CompetitiveConfig: Equatable {
     var reserveTime: Int
 }
 
+struct PendingCallWindow: Equatable {
+    var sourcePlayerIndex: Int
+    var claimantIndex: Int
+    var remainingSeconds: Int
+}
+
 struct FormalScoringDraft: Identifiable, Hashable {
     let id = UUID()
     var winnerIndex: Int
     var winType: WinType
     var loserIndex: Int?
+    var riichiYaku: RiichiYakuKind = .none
+    var hasIppatsu = false
 }
 
 struct FormalWinnerEntry: Identifiable {
@@ -32,18 +224,28 @@ struct FormalWinnerEntry: Identifiable {
     var hanInput: String
     var fuInput: String
     var yakumanMultiplier: Int = 0
+    var detectedText: String = ""
+    var riichiYaku: RiichiYakuKind = .none
+    var hasIppatsu = false
 }
 
 struct HandPatternDraft {
     var activeSection: TileInputSection = .concealed
-    var openMeldType: OpenMeldType = .chi
     var handCounts: [MahjongTile: Int] = [:]
     var openCounts: [MahjongTile: Int] = [:]
     var openMeldGroups: [OpenMeldGroup] = []
+    var concealedKanTiles: Set<MahjongTile> = []
+    var riichiYaku: RiichiYakuKind = .none
+    var selectedCircumstantialYaku: Set<CircumstantialYaku> = []
     var winningTile: MahjongTile? = nil
     var doraCount: Int = 0
     var redDoraCount: Int = 0
     var analysisResult: PatternDetectionResult? = nil
+}
+
+enum PatternInputEntryMode {
+    case manual
+    case photoAssisted
 }
 
 enum OpenMeldType: String, CaseIterable, Identifiable {
@@ -163,6 +365,12 @@ struct ScoreboardView: View {
     @State private var hasInitializedCompetitiveState = false
     @State private var handTimerStarted = false
     @State private var formalScoringDraft: FormalScoringDraft? = nil
+    @State private var pendingCallWindow: PendingCallWindow? = nil
+    @State private var completedTurnsInCurrentHand = [0, 0, 0, 0]
+    @State private var callOccurredInCurrentHand = false
+    @State private var riichiYakuByPlayer = Array(repeating: RiichiYakuKind.none, count: 4)
+    @State private var riichiDeclarationCompletedTurns: [Int?] = Array(repeating: nil, count: 4)
+    @State private var ippatsuEligiblePlayers: Set<Int> = []
     
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -332,23 +540,39 @@ struct ScoreboardView: View {
         PlayerCardView(
             player: game.players[index],
             onRiichi: {
-                game.declareRiichi(for: index)
+                handleDeclareRiichi(for: index)
             },
+            boardPosition: boardPosition(for: index),
             canRiichi: canDeclareRiichi(for: index),
             compactLayout: compactLayout,
             timerDisplay: timerDisplay(for: index),
             showCompetitiveChrome: isCompetitiveMode,
             leftActionTitle: leftActionTitle(for: index),
             onLeftAction: leftAction(for: index),
+            callActionTitle: callActionTitle(for: index),
+            onCallAction: callAction(for: index),
             showStartButton: isCompetitiveMode && activeTurnIndex == index && !handTimerStarted,
             onStartTurn: isCompetitiveMode && activeTurnIndex == index && !handTimerStarted ? {
                 startTurnTimer()
             } : nil,
-            showFinishButton: isCompetitiveMode && activeTurnIndex == index && handTimerStarted,
+            showFinishButton: isCompetitiveMode && activeTurnIndex == index && handTimerStarted && pendingCallWindow == nil,
             onFinishTurn: isCompetitiveMode && activeTurnIndex == index && handTimerStarted ? {
                 finishCurrentTurn()
             } : nil
         )
+    }
+
+    func boardPosition(for index: Int) -> BoardSeatPosition {
+        switch index {
+        case 0:
+            return .bottom
+        case 1:
+            return .right
+        case 2:
+            return .top
+        default:
+            return .left
+        }
     }
 
     func canDeclareRiichi(for index: Int) -> Bool {
@@ -471,6 +695,18 @@ struct ScoreboardView: View {
             openFormalScoring(for: index)
         }
     }
+
+    func callActionTitle(for index: Int) -> String? {
+        guard canCall(for: index) else { return nil }
+        return "鸣"
+    }
+
+    func callAction(for index: Int) -> (() -> Void)? {
+        guard canCall(for: index) else { return nil }
+        return {
+            handleCall(for: index)
+        }
+    }
     
     func timerDisplay(for index: Int) -> CompetitiveTimerDisplay? {
         guard isCompetitiveMode, activeTurnIndex == index, handTimerStarted else { return nil }
@@ -497,6 +733,12 @@ struct ScoreboardView: View {
         currentTurnMainTime = competitiveConfig.turnTime
         activeTurnIndex = eastPlayerIndex
         handTimerStarted = false
+        pendingCallWindow = nil
+        completedTurnsInCurrentHand = Array(repeating: 0, count: game.players.count)
+        callOccurredInCurrentHand = false
+        riichiYakuByPlayer = Array(repeating: .none, count: game.players.count)
+        riichiDeclarationCompletedTurns = Array(repeating: nil, count: game.players.count)
+        ippatsuEligiblePlayers = []
         hasInitializedCompetitiveState = true
     }
     
@@ -508,29 +750,56 @@ struct ScoreboardView: View {
         activeTurnIndex = eastPlayerIndex
         currentTurnMainTime = competitiveConfig.turnTime
         handTimerStarted = false
+        pendingCallWindow = nil
+        completedTurnsInCurrentHand = Array(repeating: 0, count: game.players.count)
+        callOccurredInCurrentHand = false
+        riichiYakuByPlayer = Array(repeating: .none, count: game.players.count)
+        riichiDeclarationCompletedTurns = Array(repeating: nil, count: game.players.count)
+        ippatsuEligiblePlayers = []
     }
     
     func startTurnTimer() {
         guard competitiveConfig != nil else { return }
         handTimerStarted = true
+        pendingCallWindow = nil
+    }
+
+    func handleDeclareRiichi(for index: Int) {
+        guard canDeclareRiichi(for: index) else { return }
+        guard game.players.indices.contains(index) else { return }
+        guard !game.players[index].isRiichi else { return }
+
+        let shouldBeDoubleRiichi =
+            completedTurnsInCurrentHand[index] == 0
+            && !callOccurredInCurrentHand
+
+        game.declareRiichi(for: index)
+        riichiYakuByPlayer[index] = shouldBeDoubleRiichi ? .doubleRiichi : .riichi
+        riichiDeclarationCompletedTurns[index] = completedTurnsInCurrentHand[index]
+        ippatsuEligiblePlayers.insert(index)
     }
 
     func openFormalScoring(for winnerIndex: Int) {
         guard isCompetitiveMode else { return }
         handTimerStarted = false
+        pendingCallWindow = nil
         
         let draft: FormalScoringDraft
         if winnerIndex == activeTurnIndex {
             draft = FormalScoringDraft(
                 winnerIndex: winnerIndex,
                 winType: .tsumo,
-                loserIndex: nil
+                loserIndex: nil,
+                riichiYaku: riichiYakuByPlayer[winnerIndex],
+                hasIppatsu: ippatsuEligiblePlayers.contains(winnerIndex)
             )
         } else {
             draft = FormalScoringDraft(
                 winnerIndex: winnerIndex,
                 winType: .ron,
-                loserIndex: activeTurnIndex
+                loserIndex: activeTurnIndex,
+                riichiYaku: riichiYakuByPlayer[winnerIndex],
+                hasIppatsu: ippatsuEligiblePlayers.contains(winnerIndex)
             )
         }
         
@@ -539,9 +808,15 @@ struct ScoreboardView: View {
     
     func finishCurrentTurn() {
         guard let competitiveConfig else { return }
+        completedTurnsInCurrentHand[activeTurnIndex] += 1
+        if let declaredAt = riichiDeclarationCompletedTurns[activeTurnIndex],
+           completedTurnsInCurrentHand[activeTurnIndex] >= declaredAt + 2 {
+            ippatsuEligiblePlayers.remove(activeTurnIndex)
+        }
         activeTurnIndex = (activeTurnIndex + 1) % game.players.count
         currentTurnMainTime = competitiveConfig.turnTime
         handTimerStarted = true
+        pendingCallWindow = nil
     }
     
     func tickCompetitiveTimer() {
@@ -549,6 +824,15 @@ struct ScoreboardView: View {
         guard !showingNewGameSetup, !showingDrawDecision else { return }
         guard !game.isMatchFinished else { return }
         guard handTimerStarted else { return }
+
+        if var pendingCallWindow {
+            pendingCallWindow.remainingSeconds -= 1
+            if pendingCallWindow.remainingSeconds <= 0 {
+                self.pendingCallWindow = nil
+            } else {
+                self.pendingCallWindow = pendingCallWindow
+            }
+        }
         
         if currentTurnMainTime > 0 {
             currentTurnMainTime -= 1
@@ -556,11 +840,66 @@ struct ScoreboardView: View {
             reserveTimes[activeTurnIndex] -= 1
         }
     }
+
+    func canCall(for index: Int) -> Bool {
+        guard isCompetitiveMode, handTimerStarted else { return false }
+        guard game.players.indices.contains(index) else { return false }
+
+        if let pendingCallWindow {
+            return index != pendingCallWindow.sourcePlayerIndex && index != pendingCallWindow.claimantIndex
+        }
+
+        return index != activeTurnIndex
+    }
+
+    func handleCall(for index: Int) {
+        guard let competitiveConfig else { return }
+        guard canCall(for: index) else { return }
+
+        callOccurredInCurrentHand = true
+        ippatsuEligiblePlayers.removeAll()
+
+        if let pendingCallWindow {
+            activeTurnIndex = index
+            currentTurnMainTime = competitiveConfig.turnTime
+            self.pendingCallWindow = nil
+            handTimerStarted = true
+            return
+        }
+
+        let sourcePlayerIndex = activeTurnIndex
+        let nextPlayerIndex = (sourcePlayerIndex + 1) % game.players.count
+
+        activeTurnIndex = index
+        currentTurnMainTime = competitiveConfig.turnTime
+        handTimerStarted = true
+
+        if index == nextPlayerIndex {
+            pendingCallWindow = PendingCallWindow(
+                sourcePlayerIndex: sourcePlayerIndex,
+                claimantIndex: index,
+                remainingSeconds: 3
+            )
+        } else {
+            pendingCallWindow = nil
+        }
+    }
 }
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("ContentView Preview Disabled")
+                    .font(.title3)
+                    .bold()
+                Text("完整 ContentView 依赖拍照识别与本地模型链。请直接运行模拟器或真机验证真实 UI。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(24)
+        }
     }
 }
 
@@ -1007,15 +1346,17 @@ struct FormalScoringView: View {
     @State private var handPatternDraft = HandPatternDraft()
     @State private var ronWinnerDrafts: [Int: HandPatternDraft] = [:]
     @State private var completedPatternWinnerIndices: Set<Int> = []
+    @State private var patternInputEntryMode: PatternInputEntryMode = .manual
     @State private var detectedYakuNames: [String] = []
     @State private var detectedNotes: [String] = []
     @State private var detectedYakumanMultiplier = 0
+    @State private var didConfigureInitialState = false
     
     private let hanOptions = Array(1...13)
     private let fuOptions = [20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110]
 
     var orderedRonWinnerIndices: [Int] {
-        ronWinnerEntries.map(\.winnerIndex)
+        ronWinnerEntries.map(\.winnerIndex).sorted()
     }
 
     var needsSequentialRonPatternInput: Bool {
@@ -1028,10 +1369,21 @@ struct FormalScoringView: View {
     }
 
     var patternInputApplyButtonTitle: String {
+        if patternInputEntryMode == .photoAssisted {
+            if needsSequentialRonPatternInput, let nextWinner = nextRonWinnerIndex(after: winnerIndex) {
+                return "确认牌面并前往\(game.players[nextWinner].name)"
+            }
+            return "确认牌面并计算"
+        }
         if needsSequentialRonPatternInput, let nextWinner = nextRonWinnerIndex(after: winnerIndex) {
             return "保存并前往\(game.players[nextWinner].name)"
         }
-        return "应用到正式算分"
+        return "保存"
+    }
+
+    var patternInputEntryHint: String? {
+        guard patternInputEntryMode == .photoAssisted else { return nil }
+        return "拍照识别结果已经自动填入。先确认牌面，必要时手动微调；确认后再进入胡牌逻辑。"
     }
 
     var patternInputWinnerSummaryText: String? {
@@ -1056,6 +1408,37 @@ struct FormalScoringView: View {
                 }
             }
         )
+    }
+
+    func riichiSnapshot(for index: Int) -> RiichiYakuKind {
+        if let entry = ronWinnerEntries.first(where: { $0.winnerIndex == index }) {
+            return entry.riichiYaku
+        }
+        if let draft, draft.winnerIndex == index {
+            return draft.riichiYaku
+        }
+        if game.players.indices.contains(index), game.players[index].isRiichi {
+            return .riichi
+        }
+        return .none
+    }
+
+    func ippatsuSnapshot(for index: Int) -> Bool {
+        if let entry = ronWinnerEntries.first(where: { $0.winnerIndex == index }) {
+            return entry.hasIppatsu
+        }
+        if let draft, draft.winnerIndex == index {
+            return draft.hasIppatsu
+        }
+        return false
+    }
+
+    var ronWinnerInputStatusMap: [Int: String] {
+        Dictionary(uniqueKeysWithValues: ronWinnerEntries.map { entry in
+            let hanText = entry.hanInput.isEmpty ? "未填" : "\(entry.hanInput)番"
+            let fuText = entry.fuInput.isEmpty ? "未填" : "\(entry.fuInput)符"
+            return (entry.winnerIndex, "\(hanText) \(fuText)")
+        })
     }
     
     var body: some View {
@@ -1093,12 +1476,16 @@ struct FormalScoringView: View {
             
             if winType == .tsumo {
                 Section("番符输入") {
-                    Button("牌型输入") {
+                    Button("手动输入牌型") {
+                        if let firstWinner = orderedRonWinnerIndices.first {
+                            winnerIndex = firstWinner
+                        }
+                        patternInputEntryMode = .manual
                         showingPatternInput = true
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button("拍照输入") {
+                    Button("拍照识别牌型") {
                         showingPhotoInput = true
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1117,12 +1504,16 @@ struct FormalScoringView: View {
                 }
             } else {
                 Section("牌型输入") {
-                    Button("打开牌型输入页面") {
+                    Button("手动输入牌型") {
+                        if let firstWinner = orderedRonWinnerIndices.first {
+                            winnerIndex = firstWinner
+                        }
+                        patternInputEntryMode = .manual
                         showingPatternInput = true
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button("打开拍照输入页面") {
+                    Button("拍照识别牌型") {
                         showingPhotoInput = true
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1130,99 +1521,48 @@ struct FormalScoringView: View {
                     Text("当前最小版本按门前手设计：先录入 13 张手牌，再单独录入最后 1 张和牌。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
-                    Text("拍照输入入口已预留，后续会接相机拍照识别并回填到正式算分。")
+                    Text("拍照识别后会进入同一套牌型编辑页，先确认/微调牌面，再进入正式算分。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
             }
             
             Section("当前牌局状态") {
-                VStack(alignment: .leading, spacing: 8) {
-                    labelRow(title: "当前局", detail: game.roundText)
-                    labelRow(title: "本场", detail: "\(game.honbaCount)")
-                    labelRow(title: "立直棒", detail: "\(game.riichiStickCount)")
-                    labelRow(title: "当前胡牌者身份", detail: currentWinnerIdentityText)
-                }
-            }
-            
-            if !detectedYakuNames.isEmpty || !detectedNotes.isEmpty {
-                Section("牌型识别结果") {
-                    if !detectedYakuNames.isEmpty {
-                        labelRow(title: "识别役种", detail: detectedYakuNames.joined(separator: "、"))
+                if winType == .ron, !multiRonPreviews.isEmpty {
+                    ForEach(multiRonPreviews.indices, id: \.self) { index in
+                        compactWinnerSummaryCard(
+                            winnerIdentity: winnerIdentityText(for: multiRonPreviews[index].winnerIndex),
+                            detectedText: compactDetectedText(for: multiRonPreviews[index].winnerIndex),
+                            preview: multiRonPreviews[index]
+                        )
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
                     }
-                    ForEach(detectedNotes, id: \.self) { note in
-                        Text(note)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
-            if winType == .ron {
-                if !multiRonPreviews.isEmpty {
-                    Section("结算预览") {
-                        ForEach(multiRonPreviews.indices, id: \.self) { index in
-                            let preview = multiRonPreviews[index]
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(game.players[preview.winnerIndex].name)
-                                    .font(.headline)
-                                Text(preview.limitName ?? "番符：\(preview.han) 番 \(preview.fu) 符")
-                                    .font(.footnote)
-                                    .foregroundColor(.secondary)
-                                Text("该家获得：\(preview.winnerGain - (index == 0 ? 0 : preview.riichiBonus)) 点")
-                                    .font(.footnote)
-                                Text("点炮者支付：\(preview.loserPayment ?? 0) 点")
-                                    .font(.footnote)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        
-                        labelRow(title: "点炮者总支付", detail: "\(multiRonTotalPayment) 点")
-                    }
-                }
-            } else if let scorePreview = scorePreview {
-                Section("结算预览") {
-                    labelRow(
-                        title: "番符",
-                        detail: scorePreview.limitName ?? "\(scorePreview.han) 番 \(scorePreview.fu) 符"
+                } else if let scorePreview = scorePreview {
+                    compactWinnerSummaryCard(
+                        winnerIdentity: currentWinnerIdentityText,
+                        detectedText: compactDetectedText(for: winnerIndex),
+                        preview: scorePreview
                     )
-                    
-                    if scorePreview.winType == .ron {
-                        labelRow(
-                            title: "放铳支付",
-                            detail: "\(scorePreview.loserPayment ?? 0) 点"
-                        )
-                    } else if scorePreview.isEastWin {
-                        labelRow(
-                            title: "每家支付",
-                            detail: "\(scorePreview.nonDealerPayment ?? 0) 点"
-                        )
-                    } else {
-                        labelRow(
-                            title: "庄家支付",
-                            detail: "\(scorePreview.dealerPayment ?? 0) 点"
-                        )
-                        labelRow(
-                            title: "闲家各付",
-                            detail: "\(scorePreview.nonDealerPayment ?? 0) 点"
-                        )
-                    }
-                    
-                    labelRow(
-                        title: "胡牌者总收入",
-                        detail: "\(scorePreview.winnerGain) 点"
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                } else {
+                    compactWinnerSummaryCard(
+                        winnerIdentity: currentWinnerIdentityText,
+                        detectedText: compactDetectedText(for: winnerIndex),
+                        preview: nil
                     )
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
                 }
             }
             
-            if !needsSequentialRonPatternInput || allRonPatternsCompleted {
-                Section {
-                    Button("确认结算") {
-                        applyFormalSettlement()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .disabled(!canConfirmFormalScore)
+            Section {
+                Button("确认结算") {
+                    applyFormalSettlement()
                 }
+                .frame(maxWidth: .infinity)
+                .disabled(!canConfirmFormalScore)
             }
             
             Section("说明") {
@@ -1231,7 +1571,11 @@ struct FormalScoringView: View {
         }
         .navigationTitle("正式算分")
         .onAppear {
-            configureInitialState()
+            guard !didConfigureInitialState else { return }
+            DispatchQueue.main.async {
+                configureInitialState()
+                didConfigureInitialState = true
+            }
         }
         .onChange(of: winnerIndex) {
             fixLoserIfNeeded()
@@ -1244,11 +1588,16 @@ struct FormalScoringView: View {
             NavigationStack {
                 HandPatternInputView(
                     game: game,
-                    winnerIndex: winnerIndex,
+                    winnerIndex: $winnerIndex,
                     winType: winType,
                     draft: currentPatternDraftBinding,
+                    entryMode: patternInputEntryMode,
+                    entryHint: patternInputEntryHint,
                     applyButtonTitle: patternInputApplyButtonTitle,
-                    winnerSummaryText: patternInputWinnerSummaryText
+                    winnerSummaryText: patternInputWinnerSummaryText,
+                    selectableWinnerIndices: winType == .ron ? orderedRonWinnerIndices : [winnerIndex],
+                    winnerInputStatusMap: ronWinnerInputStatusMap,
+                    allWinnerDrafts: ronWinnerDrafts
                 ) { result in
                     applyPatternDetectionResult(result)
                     detectedYakuNames = result.yakuNames
@@ -1261,23 +1610,47 @@ struct FormalScoringView: View {
         }
         .sheet(isPresented: $showingPhotoInput) {
             NavigationStack {
-                PhotoRecognitionView { result in
-                    if let importedDraft = PhotoRecognitionImport.makeHandPatternDraft(from: result) {
-                        if winType == .ron {
-                            ronWinnerDrafts[winnerIndex] = importedDraft
-                        } else {
-                            handPatternDraft = importedDraft
-                        }
-                        detectedYakuNames = ["已回填拍照识别牌面"]
-                        detectedNotes = result.notes + ["识别牌面已经回填到牌型输入草稿，可以继续打开牌型输入页手动微调。"]
-                        showingPhotoInput = false
-                        DispatchQueue.main.async {
-                            showingPatternInput = true
+                PhotoRecognitionView(
+                    context: PhotoRecognitionContext(
+                        roundText: game.roundText,
+                        honbaCount: game.honbaCount,
+                        riichiStickCount: game.riichiStickCount,
+                        winnerIdentity: winnerIdentityText(for: winnerIndex)
+                    )
+                ) { result in
+                    var importedDraft = PhotoRecognitionImport.makeHandPatternDraft(from: result) ?? HandPatternDraft()
+                    let importedTileCount =
+                        importedDraft.handCounts.values.reduce(0, +)
+                        + importedDraft.openCounts.values.reduce(0, +)
+                        + (importedDraft.winningTile == nil ? 0 : 1)
+
+                    let preservedRiichi = riichiSnapshot(for: winnerIndex)
+                    let preservedIppatsu = ippatsuSnapshot(for: winnerIndex)
+                    importedDraft.riichiYaku = preservedRiichi
+                    if preservedIppatsu {
+                        importedDraft.selectedCircumstantialYaku.insert(.ippatsu)
+                    } else {
+                        importedDraft.selectedCircumstantialYaku.remove(.ippatsu)
+                    }
+
+                    patternInputEntryMode = .photoAssisted
+                    if winType == .ron {
+                        ronWinnerDrafts[winnerIndex] = importedDraft
+                        if let entryIndex = ronWinnerEntries.firstIndex(where: { $0.winnerIndex == winnerIndex }) {
+                            ronWinnerEntries[entryIndex].detectedText = importedTileCount > 0 ? "已回填拍照识别牌面" : "识别结果为空，已进入手动微调"
                         }
                     } else {
-                        detectedYakuNames = []
-                        detectedNotes = result.notes + ["这次拍照结果还不足以完整回填到牌型输入草稿。"]
-                        showingPhotoInput = false
+                        handPatternDraft = importedDraft
+                    }
+                    detectedYakuNames = importedTileCount > 0 ? ["已回填拍照识别牌面"] : []
+                    detectedNotes = result.notes + [
+                        importedTileCount > 0
+                        ? "识别牌面已经回填到牌型输入草稿，可以继续手动微调。"
+                        : "这次拍照结果没有稳定回填出牌面，已进入手动微调页。"
+                    ]
+                    showingPhotoInput = false
+                    DispatchQueue.main.async {
+                        showingPatternInput = true
                     }
                 }
             }
@@ -1295,19 +1668,154 @@ struct FormalScoringView: View {
         .padding(.vertical, 2)
     }
 
+    func compactWinnerSummaryCard(
+        winnerIdentity: String,
+        detectedText: String,
+        preview: FormalScoreResult?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                compactTopMetric(title: "当前局", detail: game.roundText)
+                compactTopMetric(title: "本场", detail: "\(game.honbaCount)")
+                compactTopMetric(title: "立直棒", detail: "\(game.riichiStickCount)")
+                compactTopMetric(title: "胡牌者", detail: winnerIdentity)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("役种识别")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(detectedText)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            if let preview {
+                compactPreviewPanel(preview)
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.75))
+        .cornerRadius(12)
+    }
+
+    func compactPreviewPanel(_ scorePreview: FormalScoreResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("结算预览")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text("\(scorePreview.limitName ?? "\(scorePreview.han) 番 \(scorePreview.fu) 符")")
+                .font(.headline)
+                .bold()
+
+            if scorePreview.winType == .ron {
+                compactPreviewRow(
+                    title: "放铳",
+                    detail: "\(seatShortText(for: scorePreview.loserIndex)) \(formattedPoints(scorePreview.loserPayment ?? 0)) 点"
+                )
+            } else if scorePreview.isEastWin {
+                compactPreviewRow(
+                    title: "三家支付",
+                    detail: "各 \(formattedPoints(scorePreview.nonDealerPayment ?? 0)) 点"
+                )
+            } else {
+                compactPreviewRow(
+                    title: "庄家支付",
+                    detail: "\(formattedPoints(scorePreview.dealerPayment ?? 0)) 点"
+                )
+                compactPreviewRow(
+                    title: "闲家支付",
+                    detail: "各 \(formattedPoints(scorePreview.nonDealerPayment ?? 0)) 点"
+                )
+            }
+
+            compactPreviewRow(
+                title: "场供",
+                detail: "\(scorePreview.honbaCount) 本场 + \(scorePreview.riichiStickCount) 立直棒"
+            )
+            Divider()
+            Text("总获得 \(formattedPoints(scorePreview.winnerGain)) 点")
+                .font(.headline)
+                .bold()
+        }
+    }
+
+    func compactTopMetric(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(detail)
+                .font(.subheadline)
+                .bold()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func compactPreviewRow(title: String, detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .frame(width: 56, alignment: .leading)
+            Text(detail)
+                .font(.subheadline)
+                .bold()
+        }
+    }
+
+    func formattedPoints(_ value: Int) -> String {
+        value.formatted()
+    }
+
+    func seatShortText(for index: Int?) -> String {
+        guard let index, game.players.indices.contains(index) else { return "-" }
+        return String(game.players[index].name.prefix(1))
+    }
+
+    func winnerIdentityText(for index: Int) -> String {
+        guard game.players.indices.contains(index) else { return "-" }
+        let seat = seatShortText(for: index)
+        return game.isEastPlayer(index) ? "\(seat)(庄)" : "\(seat)(闲)"
+    }
+
+    func compactDetectedText(for winnerIndex: Int) -> String {
+        if winType == .ron,
+           let entry = ronWinnerEntries.first(where: { $0.winnerIndex == winnerIndex }) {
+            if !entry.detectedText.isEmpty {
+                return entry.detectedText
+            }
+            if !entry.hanInput.isEmpty || !entry.fuInput.isEmpty {
+                return "手动输入"
+            }
+            return "等待输入"
+        }
+        let names = detectedYakuNames
+        if !names.isEmpty {
+            return names.joined(separator: "、")
+        }
+        if let firstNote = detectedNotes.first, !firstNote.isEmpty {
+            return firstNote
+        }
+        return game.players.indices.contains(winnerIndex) ? "等待输入" : "-"
+    }
+
     func applyPatternDetectionResult(_ result: PatternDetectionResult) {
         if winType == .ron {
             if let entryIndex = ronWinnerEntries.firstIndex(where: { $0.winnerIndex == winnerIndex }) {
                 ronWinnerEntries[entryIndex].hanInput = "\(result.han)"
                 ronWinnerEntries[entryIndex].fuInput = "\(result.fu)"
                 ronWinnerEntries[entryIndex].yakumanMultiplier = result.yakumanMultiplier
+                ronWinnerEntries[entryIndex].detectedText = result.yakuNames.joined(separator: "、")
             } else {
                 ronWinnerEntries.append(
                     FormalWinnerEntry(
                         winnerIndex: winnerIndex,
                         hanInput: "\(result.han)",
                         fuInput: "\(result.fu)",
-                        yakumanMultiplier: result.yakumanMultiplier
+                        yakumanMultiplier: result.yakumanMultiplier,
+                        detectedText: result.yakuNames.joined(separator: "、")
                     )
                 )
             }
@@ -1373,15 +1881,8 @@ struct FormalScoringView: View {
         )
     }
     
-    var multiRonTotalPayment: Int {
-        multiRonPreviews.reduce(0) { $0 + ($1.loserPayment ?? 0) }
-    }
-    
     var canConfirmFormalScore: Bool {
         if winType == .ron {
-            if needsSequentialRonPatternInput && !allRonPatternsCompleted {
-                return false
-            }
             return !ronWinnerEntries.isEmpty
                 && loserIndexBinding.wrappedValue != winnerIndex
                 && ronWinnerEntries.allSatisfy {
@@ -1397,10 +1898,10 @@ struct FormalScoringView: View {
     
     var currentWinnerIdentityText: String {
         if winType == .ron {
-            let labels = ronWinnerEntries.map { game.isEastPlayer($0.winnerIndex) ? "\(game.players[$0.winnerIndex].name)(庄)" : "\(game.players[$0.winnerIndex].name)(闲)" }
+            let labels = ronWinnerEntries.map { winnerIdentityText(for: $0.winnerIndex) }
             return labels.joined(separator: "、")
         }
-        return game.isEastPlayer(winnerIndex) ? "庄家" : "闲家"
+        return winnerIdentityText(for: winnerIndex)
     }
     
     func configureInitialState() {
@@ -1409,15 +1910,41 @@ struct FormalScoringView: View {
             winType = draft.winType
             loserIndex = draft.loserIndex ?? availableLoserIndices.first ?? 0
             ronWinnerEntries = [
-                FormalWinnerEntry(winnerIndex: draft.winnerIndex, hanInput: "1", fuInput: "30")
+                FormalWinnerEntry(
+                    winnerIndex: draft.winnerIndex,
+                    hanInput: "",
+                    fuInput: "",
+                    detectedText: "",
+                    riichiYaku: draft.riichiYaku,
+                    hasIppatsu: draft.hasIppatsu
+                )
             ]
+            handPatternDraft.riichiYaku = draft.riichiYaku
+            if draft.hasIppatsu {
+                handPatternDraft.selectedCircumstantialYaku.insert(.ippatsu)
+            } else {
+                handPatternDraft.selectedCircumstantialYaku.remove(.ippatsu)
+            }
         } else {
             winnerIndex = 0
             winType = .ron
             loserIndex = 1
             ronWinnerEntries = [
-                FormalWinnerEntry(winnerIndex: 0, hanInput: "1", fuInput: "30")
+                FormalWinnerEntry(
+                    winnerIndex: 0,
+                    hanInput: "",
+                    fuInput: "",
+                    detectedText: "",
+                    riichiYaku: riichiSnapshot(for: 0),
+                    hasIppatsu: ippatsuSnapshot(for: 0)
+                )
             ]
+            handPatternDraft.riichiYaku = riichiSnapshot(for: 0)
+            if ippatsuSnapshot(for: 0) {
+                handPatternDraft.selectedCircumstantialYaku.insert(.ippatsu)
+            } else {
+                handPatternDraft.selectedCircumstantialYaku.remove(.ippatsu)
+            }
         }
         loadCurrentPatternDraftIfNeeded()
         fixLoserIfNeeded()
@@ -1532,12 +2059,14 @@ struct FormalScoringView: View {
                         .foregroundColor(.secondary)
                     
                     Picker("番数", selection: $entry.hanInput) {
+                        Text("未填写").tag("")
                         ForEach(hanOptions, id: \.self) { han in
                             Text("\(han) 番").tag(String(han))
                         }
                     }
                     
                     Picker("符数", selection: $entry.fuInput) {
+                        Text("未填写").tag("")
                         ForEach(fuOptions, id: \.self) { fu in
                             Text("\(fu) 符").tag(String(fu))
                         }
@@ -1561,7 +2090,14 @@ struct FormalScoringView: View {
             }
         } else {
             ronWinnerEntries.append(
-                FormalWinnerEntry(winnerIndex: index, hanInput: "1", fuInput: "30")
+                FormalWinnerEntry(
+                    winnerIndex: index,
+                    hanInput: "",
+                    fuInput: "",
+                    detectedText: "",
+                    riichiYaku: riichiSnapshot(for: index),
+                    hasIppatsu: ippatsuSnapshot(for: index)
+                )
             )
             winnerIndex = index
         }
@@ -1570,7 +2106,40 @@ struct FormalScoringView: View {
 
     func loadCurrentPatternDraftIfNeeded() {
         if winType == .ron, ronWinnerDrafts[winnerIndex] == nil {
-            ronWinnerDrafts[winnerIndex] = HandPatternDraft()
+            var newDraft = HandPatternDraft()
+            if let entry = ronWinnerEntries.first(where: { $0.winnerIndex == winnerIndex }) {
+                newDraft.riichiYaku = entry.riichiYaku
+                if entry.hasIppatsu {
+                    newDraft.selectedCircumstantialYaku.insert(.ippatsu)
+                }
+            }
+            ronWinnerDrafts[winnerIndex] = newDraft
+        } else if winType == .ron,
+                  var existingDraft = ronWinnerDrafts[winnerIndex],
+                  let entry = ronWinnerEntries.first(where: { $0.winnerIndex == winnerIndex }) {
+            existingDraft.riichiYaku = entry.riichiYaku
+            if entry.hasIppatsu {
+                existingDraft.selectedCircumstantialYaku.insert(.ippatsu)
+            } else {
+                existingDraft.selectedCircumstantialYaku.remove(.ippatsu)
+            }
+            ronWinnerDrafts[winnerIndex] = existingDraft
+        } else if winType == .tsumo {
+            if let draft {
+                handPatternDraft.riichiYaku = draft.riichiYaku
+                if draft.hasIppatsu {
+                    handPatternDraft.selectedCircumstantialYaku.insert(.ippatsu)
+                } else {
+                    handPatternDraft.selectedCircumstantialYaku.remove(.ippatsu)
+                }
+            } else {
+                handPatternDraft.riichiYaku = riichiSnapshot(for: winnerIndex)
+                if ippatsuSnapshot(for: winnerIndex) {
+                    handPatternDraft.selectedCircumstantialYaku.insert(.ippatsu)
+                } else {
+                    handPatternDraft.selectedCircumstantialYaku.remove(.ippatsu)
+                }
+            }
         }
     }
 
@@ -1588,179 +2157,46 @@ struct FormalScoringView: View {
             completedPatternWinnerIndices.insert(winnerIndex)
             if let nextWinner = nextRonWinnerIndex(after: winnerIndex) {
                 winnerIndex = nextWinner
+                patternInputEntryMode = .manual
                 loadCurrentPatternDraftIfNeeded()
                 return
             }
         }
+        patternInputEntryMode = .manual
         showingPatternInput = false
-    }
-}
-
-struct PatternDetectionResult {
-    var han: Int
-    var fu: Int
-    var yakuNames: [String]
-    var notes: [String]
-    var yakumanMultiplier: Int = 0
-}
-
-enum TileInputSection: String, CaseIterable, Identifiable {
-    case concealed = "手牌"
-    case openMeld = "副露"
-    case winning = "胡牌"
-    
-    var id: String { rawValue }
-}
-
-enum MahjongTile: Int, CaseIterable, Identifiable, Hashable {
-    case man1, man2, man3, man4, man5, man6, man7, man8, man9
-    case pin1, pin2, pin3, pin4, pin5, pin6, pin7, pin8, pin9
-    case sou1, sou2, sou3, sou4, sou5, sou6, sou7, sou8, sou9
-    case east, south, west, north, white, green, red
-    
-    var id: Int { rawValue }
-    
-    var label: String {
-        switch self {
-        case .man1: return "1万"
-        case .man2: return "2万"
-        case .man3: return "3万"
-        case .man4: return "4万"
-        case .man5: return "5万"
-        case .man6: return "6万"
-        case .man7: return "7万"
-        case .man8: return "8万"
-        case .man9: return "9万"
-        case .pin1: return "1筒"
-        case .pin2: return "2筒"
-        case .pin3: return "3筒"
-        case .pin4: return "4筒"
-        case .pin5: return "5筒"
-        case .pin6: return "6筒"
-        case .pin7: return "7筒"
-        case .pin8: return "8筒"
-        case .pin9: return "9筒"
-        case .sou1: return "1索"
-        case .sou2: return "2索"
-        case .sou3: return "3索"
-        case .sou4: return "4索"
-        case .sou5: return "5索"
-        case .sou6: return "6索"
-        case .sou7: return "7索"
-        case .sou8: return "8索"
-        case .sou9: return "9索"
-        case .east: return "东"
-        case .south: return "南"
-        case .west: return "西"
-        case .north: return "北"
-        case .white: return "白"
-        case .green: return "发"
-        case .red: return "中"
-        }
-    }
-    
-    var suitTitle: String {
-        switch self {
-        case .man1, .man2, .man3, .man4, .man5, .man6, .man7, .man8, .man9:
-            return "万"
-        case .pin1, .pin2, .pin3, .pin4, .pin5, .pin6, .pin7, .pin8, .pin9:
-            return "饼"
-        case .sou1, .sou2, .sou3, .sou4, .sou5, .sou6, .sou7, .sou8, .sou9:
-            return "条"
-        default:
-            return "字"
-        }
-    }
-    
-    var isHonor: Bool {
-        rawValue >= 27
-    }
-    
-    var isTerminal: Bool {
-        guard !isHonor else { return false }
-        let number = rawValue % 9 + 1
-        return number == 1 || number == 9
-    }
-    
-    var isTerminalOrHonor: Bool {
-        isHonor || isTerminal
-    }
-    
-    var suitIndex: Int? {
-        if rawValue < 27 {
-            return rawValue / 9
-        }
-        return nil
-    }
-    
-    var number: Int? {
-        guard !isHonor else { return nil }
-        return rawValue % 9 + 1
-    }
-    
-    static var groupedTiles: [[MahjongTile]] {
-        [
-            Array(allCases[0...8]),
-            Array(allCases[9...17]),
-            Array(allCases[18...26]),
-            Array(allCases[27...33])
-        ]
-    }
-}
-
-enum HandGroupKind {
-    case sequence
-    case triplet
-}
-
-struct HandGroup {
-    var kind: HandGroupKind
-    var tiles: [Int]
-}
-
-enum WaitKind {
-    case ryanmen
-    case kanchan
-    case penchan
-    case tanki
-    case shanpon
-}
-
-struct StandardHandCandidate {
-    var pairTile: Int
-    var groups: [HandGroup]
-    var waitKind: WaitKind
-}
-
-struct HandAnalysisContext {
-    var openMeldGroups: [OpenMeldGroup]
-    
-    var openHandGroups: [HandGroup] {
-        openMeldGroups.compactMap(\.handGroup)
-    }
-    
-    var openTripletLikeCount: Int {
-        openHandGroups.filter { $0.kind == .triplet }.count
-    }
-    
-    var openSequenceCount: Int {
-        openHandGroups.filter { $0.kind == .sequence }.count
     }
 }
 
 struct HandPatternInputView: View {
     @ObservedObject var game: GameState
-    var winnerIndex: Int
+    @Binding var winnerIndex: Int
     var winType: WinType
     @Binding var draft: HandPatternDraft
+    var entryMode: PatternInputEntryMode = .manual
+    var entryHint: String? = nil
     var applyButtonTitle = "应用到正式算分"
     var winnerSummaryText: String? = nil
+    var selectableWinnerIndices: [Int] = []
+    var winnerInputStatusMap: [Int: String] = [:]
+    var allWinnerDrafts: [Int: HandPatternDraft] = [:]
     var onApply: (PatternDetectionResult) -> Void
     
     @Environment(\.dismiss) private var dismiss
-
     var winnerHasRiichi: Bool {
-        game.players.indices.contains(winnerIndex) && game.players[winnerIndex].isRiichi
+        draft.riichiYaku != .none
+    }
+
+    var otherWinnerDrafts: [HandPatternDraft] {
+        selectableWinnerIndices
+            .filter { $0 != winnerIndex }
+            .compactMap { allWinnerDrafts[$0] }
+    }
+
+    var sharedRonWinningTile: MahjongTile? {
+        guard winType == .ron else { return nil }
+        let tiles = otherWinnerDrafts.compactMap(\.winningTile)
+        guard let first = tiles.first else { return nil }
+        return tiles.allSatisfy { $0 == first } ? first : first
     }
 
     var availableTileSections: [TileInputSection] {
@@ -1779,84 +2215,71 @@ struct HandPatternInputView: View {
     }
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                statusSection
-                
-                ForEach(Array(MahjongTile.groupedTiles.enumerated()), id: \.offset) { _, tiles in
-                    VStack(alignment: .leading, spacing: 8) {
-                        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
-                        
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            if tiles.first?.isHonor == true {
-                                ForEach(tiles) { tile in
-                                    tilePickerCard(tile)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
+                    entryHeaderSection
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+
+                    Section {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Color.clear
+                                .frame(height: 1)
+                                .id("pattern-picker-top")
+
+                            ForEach(Array(MahjongTile.groupedTiles.enumerated()), id: \.offset) { _, tiles in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+
+                                    LazyVGrid(columns: columns, spacing: 8) {
+                                        if tiles.first?.isHonor == true {
+                                            ForEach(tiles) { tile in
+                                                tilePickerCard(tile)
+                                            }
+                                            bonusCounterCard(
+                                                title: "宝牌数",
+                                                count: draft.doraCount,
+                                                onDecrease: { draft.doraCount = max(0, draft.doraCount - 1) },
+                                                onIncrease: { draft.doraCount += 1 }
+                                            )
+                                            bonusCounterCard(
+                                                title: "红宝牌数",
+                                                count: draft.redDoraCount,
+                                                onDecrease: { draft.redDoraCount = max(0, draft.redDoraCount - 1) },
+                                                onIncrease: { draft.redDoraCount += 1 }
+                                            )
+                                        } else {
+                                            ForEach(tiles) { tile in
+                                                tilePickerCard(tile)
+                                            }
+                                        }
+                                    }
                                 }
-                                bonusCounterCard(
-                                    title: "宝牌数",
-                                    count: draft.doraCount,
-                                    onDecrease: { draft.doraCount = max(0, draft.doraCount - 1) },
-                                    onIncrease: { draft.doraCount += 1 }
-                                )
-                                bonusCounterCard(
-                                    title: "红宝牌数",
-                                    count: draft.redDoraCount,
-                                    onDecrease: { draft.redDoraCount = max(0, draft.redDoraCount - 1) },
-                                    onIncrease: { draft.redDoraCount += 1 }
-                                )
-                            } else {
-                                ForEach(tiles) { tile in
-                                    tilePickerCard(tile)
-                                }
+                                .padding(.vertical, 6)
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                    } header: {
+                        stickySelectionSection
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                            .background(Color(red: 0.96, green: 0.93, blue: 0.83))
                     }
-                    .padding(.vertical, 6)
-                }
-                
-                if let analysisResult = draft.analysisResult {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("识别结果")
-                            .font(.headline)
-                        Text("番数：\(analysisResult.han) 番")
-                        Text("符数：\(analysisResult.fu) 符")
-                        Text("役种：\(analysisResult.yakuNames.joined(separator: "、"))")
-                        ForEach(analysisResult.notes, id: \.self) { note in
-                            Text(note)
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding()
-                    .background(Color.white.opacity(0.7))
-                    .cornerRadius(14)
-                }
-                
-                HStack(spacing: 12) {
-                    Button("识别牌型") {
-                        draft.analysisResult = analyzeHand()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canAnalyze)
-                    
-                    Button(applyButtonTitle) {
-                        if let analysisResult = draft.analysisResult {
-                            onApply(analysisResult)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(draft.analysisResult == nil)
                 }
             }
-            .padding(16)
+            .onChange(of: draft.activeSection) { _, _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo("pattern-picker-top", anchor: .top)
+                }
+            }
         }
         .background(Color(red: 0.96, green: 0.93, blue: 0.83).ignoresSafeArea())
-        .navigationTitle("牌型输入")
+        .navigationTitle(entryMode == .photoAssisted ? "确认/微调牌面" : "牌型输入")
         .onAppear {
-            if winnerHasRiichi {
-                draft.openMeldType = .concealedKan
-            }
             sanitizeDraft()
+            refreshAnalysisAfterMetadataChange()
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -1865,12 +2288,23 @@ struct HandPatternInputView: View {
                 }
             }
         }
+        .onChange(of: winnerIndex) {
+            DispatchQueue.main.async {
+                sanitizeDraft()
+                refreshAnalysisAfterMetadataChange()
+            }
+        }
     }
     
-    var statusSection: some View {
+    var entryHeaderSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(winnerHasRiichi ? "当前最小版本支持：手牌 / 暗杠 / 胡牌 三块输入" : "当前最小版本支持：手牌 / 副露 / 胡牌 三块输入")
+            Text(entryMode == .photoAssisted ? "拍照结果已自动填入" : (winnerHasRiichi ? "当前最小版本支持：手牌 / 暗杠 / 胡牌 三块输入" : "当前最小版本支持：手牌 / 副露 / 胡牌 三块输入"))
                 .font(.headline)
+            if let entryHint {
+                Text(entryHint)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
             if let winnerSummaryText {
                 Text(winnerSummaryText)
                     .font(.footnote)
@@ -1887,14 +2321,7 @@ struct HandPatternInputView: View {
             .pickerStyle(.segmented)
             
             if draft.activeSection == .openMeld {
-                Picker(winnerHasRiichi ? "暗杠类型" : "副露类型", selection: $draft.openMeldType) {
-                    ForEach(winnerHasRiichi ? [OpenMeldType.concealedKan] : OpenMeldType.allCases, id: \.id) { type in
-                        Text(type.rawValue).tag(type)
-                    }
-                }
-                .pickerStyle(.segmented)
-                
-                Text(winnerHasRiichi ? "这里仅录入暗杠。暗杠会记入杠子张数，但识别时仍按门前清处理。" : "副露区域下，点一次牌会按所选类型直接加入整组副露。吃使用起始牌，例如点 3万 会加入 3-4-5万。")
+                Text(winnerHasRiichi ? "这里仅录入暗杠。手牌里凑到 4 张相同牌后，可单独设为暗杠。" : "副露区域直接点牌录入。4 张相同牌默认按明杠处理，其余会自动整理成碰或顺子。")
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
@@ -1904,45 +2331,298 @@ struct HandPatternInputView: View {
                     title: "手牌",
                     countText: "\(totalHandCount) 张",
                     detailText: concealedKongCount > 0 ? "杠子 \(concealedKongCount) 组" : "未成杠",
-                    isActive: draft.activeSection == .concealed
+                    isActive: draft.activeSection == .concealed,
+                    action: { draft.activeSection = .concealed }
                 )
                 sectionSummaryCard(
                     title: winnerHasRiichi ? "暗杠" : "副露",
                     countText: "\(totalOpenCount) 张",
                     detailText: openKongCount > 0 ? "杠子 \(openKongCount) 组" : "未成杠",
-                    isActive: draft.activeSection == .openMeld
+                    isActive: draft.activeSection == .openMeld,
+                    action: { draft.activeSection = .openMeld }
                 )
                 sectionSummaryCard(
                     title: "胡牌",
                     countText: draft.winningTile?.label ?? "未选",
                     detailText: "最后选择",
-                    isActive: draft.activeSection == .winning
+                    isActive: draft.activeSection == .winning,
+                    action: { draft.activeSection = .winning }
                 )
             }
             
-            Text("总牌数：\(totalTileCount) / \(requiredTileCountBeforeWin)")
-            Text("杠子数：\(totalKongCount) 组")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-            Text("宝牌：\(draft.doraCount) 番，红宝牌：\(draft.redDoraCount) 番")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-            Text("胡牌者：\(game.players[winnerIndex].name)，和牌方式：\(winType.rawValue)")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-            
-            Button("清空输入") {
-                draft = HandPatternDraft()
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("总牌数：\(totalTileCount) / \(requiredTileCountBeforeWin)")
+                    Text("杠子数：\(totalKongCount) 组")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    HStack(spacing: 16) {
+                        labelValueBlock(title: "宝牌", value: "宝：\(draft.doraCount)")
+                        labelValueBlock(title: "红宝牌", value: "红宝：\(draft.redDoraCount)")
+                    }
+                    HStack(spacing: 16) {
+                        labelValueBlock(title: "胡牌者", value: game.players[winnerIndex].name)
+                        labelValueBlock(title: "和牌方式", value: winType.rawValue)
+                    }
+                    if selectableWinnerIndices.count > 1 {
+                        winnerSelectionButtons
+                    }
+                }
+                
+                if let analysisResult = draft.analysisResult {
+                    compactAnalysisBlock(analysisResult)
+                }
             }
-            .font(.footnote)
-            .buttonStyle(.bordered)
         }
         .padding()
         .background(Color.white.opacity(0.7))
         .cornerRadius(14)
     }
+
+    var stickySelectionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            selectedTilesStrip
+            
+            HStack(spacing: 12) {
+                Button(applyButtonTitle) {
+                    onApply(analysisResultForApply())
+                }
+                .font(.footnote)
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasAnyTileInput)
+
+                Spacer()
+
+                Button("清空输入") {
+                    draft = HandPatternDraft()
+                }
+                .font(.footnote)
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.7))
+        .cornerRadius(14)
+    }
+
+    var winnerSelectionButtons: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("切换胡牌者")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                ForEach(selectableWinnerIndices, id: \.self) { index in
+                    Button {
+                        winnerIndex = index
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(game.players[index].name)
+                                .font(.subheadline)
+                                .bold()
+                            if let status = winnerInputStatusMap[index] {
+                                Text(status)
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(index == winnerIndex ? Color.orange.opacity(0.18) : Color.gray.opacity(0.12))
+                    .foregroundColor(.primary)
+                    .cornerRadius(8)
+                }
+            }
+        }
+    }
+
+    func labelValueBlock(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if title == "胡牌者" || title == "和牌方式" {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Text(value)
+                .font(title == "胡牌者" || title == "和牌方式" ? .title3 : .headline)
+                .bold()
+        }
+    }
+
+    func compactAnalysisBlock(_ analysisResult: PatternDetectionResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(analysisSummaryText(for: analysisResult))
+                .font(.headline)
+                .bold()
+            if analysisResult.yakuNames != ["无役"] {
+                Text(analysisResult.yakuNames.joined(separator: "、"))
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+            } else {
+                Text("条件役")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                inlineCircumstantialYakuButtons
+            }
+            if analysisResult.yakuNames != ["无役"], let firstNote = analysisResult.notes.first {
+                Text(firstNote)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.82))
+        .cornerRadius(12)
+    }
+
+    func analysisSummaryText(for result: PatternDetectionResult) -> String {
+        if result.yakuNames == ["无役"] {
+            return "无役"
+        }
+        return "\(result.han)番 \(result.fu)符"
+    }
+
+    var inlineCircumstantialYakuButtons: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+        return LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(CircumstantialYaku.allCases) { yaku in
+                Button {
+                    toggleCircumstantialYaku(yaku)
+                } label: {
+                    Text(yaku.rawValue)
+                        .font(.caption)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            draft.selectedCircumstantialYaku.contains(yaku)
+                            ? Color.orange.opacity(0.18)
+                            : Color.white.opacity(0.82)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(
+                                    draft.selectedCircumstantialYaku.contains(yaku)
+                                    ? Color.orange.opacity(0.7)
+                                    : Color.gray.opacity(0.15),
+                                    lineWidth: 1
+                                )
+                        )
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    var selectedTilesStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            smallTileRow(title: "手牌", tiles: selectedConcealedTiles, section: .concealed)
+            smallTileRow(title: winnerHasRiichi ? "暗杠" : "副露", tiles: selectedOpenTiles, section: .openMeld)
+            smallTileRow(title: "胡牌", tiles: draft.winningTile.map { [$0] } ?? [], section: .winning)
+        }
+    }
+
+    func smallTileRow(title: String, tiles: [MahjongTile], section: TileInputSection) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 1) {
+                    if tiles.isEmpty {
+                        Color.clear
+                            .frame(height: 30)
+                    } else {
+                        ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
+                            remoteTileFace(tile, height: 30)
+                                .frame(width: 20)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 30)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(Color.white.opacity(draft.activeSection == section ? 0.98 : 0.8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(draft.activeSection == section ? Color.orange.opacity(0.6) : Color.clear, lineWidth: 1.5)
+        }
+        .cornerRadius(10)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            draft.activeSection = section
+        }
+    }
+
+    var selectedConcealedTiles: [MahjongTile] {
+        sortedTilesForDisplay.flatMap { tile in
+            Array(repeating: tile, count: draft.handCounts[tile, default: 0])
+        }
+    }
+
+    var hasAnyTileInput: Bool {
+        totalTileCount > 0 || draft.winningTile != nil
+    }
+
+    var selectedOpenTiles: [MahjongTile] {
+        sortedTilesForDisplay.flatMap { tile in
+            Array(repeating: tile, count: draft.openCounts[tile, default: 0])
+        }
+    }
+
+    var sortedTilesForDisplay: [MahjongTile] {
+        MahjongTile.allCases.sorted(by: tileDisplayOrder(_:_:))
+    }
+
+    func tileDisplayOrder(_ lhs: MahjongTile, _ rhs: MahjongTile) -> Bool {
+        tileSortKey(lhs) < tileSortKey(rhs)
+    }
+
+    func tileSortKey(_ tile: MahjongTile) -> (Int, Int) {
+        switch tile {
+        case .man1: return (0, 1)
+        case .man2: return (0, 2)
+        case .man3: return (0, 3)
+        case .man4: return (0, 4)
+        case .man5: return (0, 5)
+        case .man6: return (0, 6)
+        case .man7: return (0, 7)
+        case .man8: return (0, 8)
+        case .man9: return (0, 9)
+        case .pin1: return (1, 1)
+        case .pin2: return (1, 2)
+        case .pin3: return (1, 3)
+        case .pin4: return (1, 4)
+        case .pin5: return (1, 5)
+        case .pin6: return (1, 6)
+        case .pin7: return (1, 7)
+        case .pin8: return (1, 8)
+        case .pin9: return (1, 9)
+        case .sou1: return (2, 1)
+        case .sou2: return (2, 2)
+        case .sou3: return (2, 3)
+        case .sou4: return (2, 4)
+        case .sou5: return (2, 5)
+        case .sou6: return (2, 6)
+        case .sou7: return (2, 7)
+        case .sou8: return (2, 8)
+        case .sou9: return (2, 9)
+        case .east: return (3, 1)
+        case .south: return (3, 2)
+        case .west: return (3, 3)
+        case .north: return (3, 4)
+        case .white: return (3, 5)
+        case .green: return (3, 6)
+        case .red: return (3, 7)
+        }
+    }
     
-    func sectionSummaryCard(title: String, countText: String, detailText: String, isActive: Bool) -> some View {
+    func sectionSummaryCard(title: String, countText: String, detailText: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         VStack(spacing: 4) {
             Text(title)
                 .font(.headline)
@@ -1961,10 +2641,12 @@ struct HandPatternInputView: View {
                 .stroke(isActive ? Color.orange.opacity(0.6) : Color.clear, lineWidth: 1.5)
         }
         .cornerRadius(12)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
     }
     
     func tilePickerCard(_ tile: MahjongTile) -> some View {
-        let totalCount = totalCount(for: tile)
+        let remainingCount = remainingCopiesForCurrentWinner(of: tile)
         
         return VStack(spacing: 6) {
             RoundedRectangle(cornerRadius: 10)
@@ -1973,7 +2655,7 @@ struct HandPatternInputView: View {
                 .overlay {
                     VStack(spacing: 2) {
                         remoteTileFace(tile, height: 48)
-                        Text("x\(max(0, 4 - totalCount))")
+                        Text("x\(remainingCount)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -1991,13 +2673,30 @@ struct HandPatternInputView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+
+            if shouldShowConcealedKanButton(for: tile) {
+                Button(draft.concealedKanTiles.contains(tile) ? "已设暗杠" : "设为暗杠") {
+                    toggleConcealedKan(tile)
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
+
+            if let kongAdjustmentTitle = kongAdjustmentButtonTitle(for: tile) {
+                Button(kongAdjustmentTitle) {
+                    toggleKongExposure(for: tile)
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
             
-            if totalTileCount == requiredTileCountBeforeWin || draft.winningTile == tile {
+            if shouldShowWinningButton(for: tile) {
                 Button(draft.winningTile == tile ? "已选和牌" : "设为和牌") {
                     setWinningTile(tile)
                 }
                 .font(.caption)
                 .buttonStyle(.bordered)
+                .disabled(draft.activeSection != .winning)
             } else {
                 Color.clear
                     .frame(height: 28)
@@ -2089,13 +2788,13 @@ struct HandPatternInputView: View {
             HStack(spacing: 6) {
                 Button("-") {
                     onDecrease()
-                    draft.analysisResult = nil
+                    refreshAnalysisAfterMetadataChange()
                 }
                 .buttonStyle(.bordered)
                 
                 Button("+") {
                     onIncrease()
-                    draft.analysisResult = nil
+                    refreshAnalysisAfterMetadataChange()
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -2118,11 +2817,11 @@ struct HandPatternInputView: View {
     }
     
     var concealedKongCount: Int {
-        draft.handCounts.values.filter { $0 == 4 }.count
+        draft.concealedKanTiles.count
     }
     
     var openKongCount: Int {
-        draft.openCounts.values.filter { $0 == 4 }.count
+        draft.openMeldGroups.filter { $0.type == .openKan }.count
     }
     
     var totalKongCount: Int {
@@ -2136,6 +2835,50 @@ struct HandPatternInputView: View {
     var canAnalyze: Bool {
         totalTileCount == requiredTileCountBeforeWin && draft.winningTile != nil
     }
+
+    var winningTileCandidates: [(tile: MahjongTile, result: PatternDetectionResult)] {
+        guard totalTileCount == requiredTileCountBeforeWin else { return [] }
+        var candidates: [(tile: MahjongTile, result: PatternDetectionResult)] = []
+        for tile in sortedTilesForDisplay {
+            guard handCount(for: tile) + openCount(for: tile) < 4,
+                  let result = analyzeHand(forWinningTile: tile) else {
+                continue
+            }
+            candidates.append((tile: tile, result: result))
+        }
+        if let sharedRonWinningTile {
+            return candidates.filter { $0.tile == sharedRonWinningTile }
+        }
+        return candidates
+    }
+
+    var selectableWinningTileSet: Set<MahjongTile> {
+        Set(winningTileCandidates.map(\.tile))
+    }
+
+    func analysisResultForApply() -> PatternDetectionResult {
+        if let result = draft.analysisResult {
+            return result
+        }
+
+        let note: String
+        if totalTileCount == 0 && draft.winningTile == nil {
+            note = "当前还没有录入任何牌面。"
+        } else if totalTileCount != requiredTileCountBeforeWin {
+            note = "当前牌面结构不完整或张数不合法，未识别出可和牌型。"
+        } else if draft.winningTile == nil {
+            note = "当前牌面尚未选择胡牌，未识别出可和牌型。"
+        } else {
+            note = "当前牌面未识别出可和牌型。"
+        }
+
+        return PatternDetectionResult(
+            han: 0,
+            fu: 0,
+            yakuNames: ["无役"],
+            notes: [note]
+        )
+    }
     
     func handCount(for tile: MahjongTile) -> Int {
         draft.handCounts[tile, default: 0]
@@ -2148,6 +2891,18 @@ struct HandPatternInputView: View {
     func totalCount(for tile: MahjongTile) -> Int {
         handCount(for: tile) + openCount(for: tile) + (draft.winningTile == tile ? 1 : 0)
     }
+
+    func otherWinnerOccupiedCount(for tile: MahjongTile) -> Int {
+        otherWinnerDrafts.reduce(0) { partial, otherDraft in
+            partial
+            + otherDraft.handCounts[tile, default: 0]
+            + otherDraft.openCounts[tile, default: 0]
+        }
+    }
+
+    func remainingCopiesForCurrentWinner(of tile: MahjongTile) -> Int {
+        max(0, 4 - otherWinnerOccupiedCount(for: tile) - totalCount(for: tile))
+    }
     
     func addTile(_ tile: MahjongTile) {
         switch draft.activeSection {
@@ -2156,27 +2911,74 @@ struct HandPatternInputView: View {
         case .openMeld:
             addOpenTile(tile)
         case .winning:
-            setWinningTile(tile)
+            if shouldShowWinningButton(for: tile) {
+                setWinningTile(tile)
+            } else {
+                draft.activeSection = .concealed
+                addHandTile(tile)
+            }
         }
     }
     
     func removeTile(_ tile: MahjongTile) {
         switch draft.activeSection {
-        case .concealed:
-            removeHandTile(tile)
-        case .openMeld:
-            removeOpenTile(tile)
         case .winning:
             if draft.winningTile == tile {
+                draft.activeSection = .winning
                 draft.winningTile = nil
                 draft.analysisResult = nil
+                return
+            }
+            if handCount(for: tile) > 0 {
+                draft.activeSection = .concealed
+                removeHandTile(tile)
+                return
+            }
+            if openCount(for: tile) > 0 {
+                draft.activeSection = .openMeld
+                removeOpenTile(tile)
+                return
+            }
+        case .concealed:
+            if handCount(for: tile) > 0 {
+                draft.activeSection = .concealed
+                removeHandTile(tile)
+                return
+            }
+            if openCount(for: tile) > 0 {
+                draft.activeSection = .openMeld
+                removeOpenTile(tile)
+                return
+            }
+            if draft.winningTile == tile {
+                draft.activeSection = .winning
+                draft.winningTile = nil
+                draft.analysisResult = nil
+                return
+            }
+        case .openMeld:
+            if openCount(for: tile) > 0 {
+                draft.activeSection = .openMeld
+                removeOpenTile(tile)
+                return
+            }
+            if handCount(for: tile) > 0 {
+                draft.activeSection = .concealed
+                removeHandTile(tile)
+                return
+            }
+            if draft.winningTile == tile {
+                draft.activeSection = .winning
+                draft.winningTile = nil
+                draft.analysisResult = nil
+                return
             }
         }
     }
     
     func addHandTile(_ tile: MahjongTile) {
         guard canAddTile(toConcealed: true, tile: tile) else { return }
-        guard totalCount(for: tile) < 4 else { return }
+        guard remainingCopiesForCurrentWinner(of: tile) > 0 else { return }
         draft.handCounts[tile, default: 0] += 1
         draft.analysisResult = nil
         updateActiveSectionForCurrentTileCount()
@@ -2193,51 +2995,157 @@ struct HandPatternInputView: View {
     }
     
     func addOpenTile(_ tile: MahjongTile) {
-        guard let tiles = tilesForOpenMeld(from: tile, type: draft.openMeldType) else { return }
-        guard canAddOpenMeld(tiles) else { return }
-        for meldTile in tiles {
-            draft.openCounts[meldTile, default: 0] += 1
-        }
-        draft.openMeldGroups.append(OpenMeldGroup(type: draft.openMeldType, tiles: tiles))
+        guard canAddTile(toConcealed: false, tile: tile) else { return }
+        guard remainingCopiesForCurrentWinner(of: tile) > 0 else { return }
+        draft.openCounts[tile, default: 0] += 1
+        rebuildOpenMeldGroups()
         draft.analysisResult = nil
         updateActiveSectionForCurrentTileCount()
     }
     
     func removeOpenTile(_ tile: MahjongTile) {
-        guard let tiles = tilesForOpenMeld(from: tile, type: draft.openMeldType) else { return }
-        guard canRemoveOpenMeld(tiles) else { return }
-        for meldTile in tiles {
-            draft.openCounts[meldTile, default: 0] -= 1
-            if draft.openCounts[meldTile] == 0 {
-                draft.openCounts.removeValue(forKey: meldTile)
-            }
+        guard openCount(for: tile) > 0 else { return }
+        draft.openCounts[tile, default: 0] -= 1
+        if draft.openCounts[tile] == 0 {
+            draft.openCounts.removeValue(forKey: tile)
         }
-        if let groupIndex = draft.openMeldGroups.lastIndex(where: { $0.type == draft.openMeldType && $0.tiles == tiles }) {
-            draft.openMeldGroups.remove(at: groupIndex)
-        }
+        rebuildOpenMeldGroups()
         draft.analysisResult = nil
         updateActiveSectionForCurrentTileCount()
     }
     
     func setWinningTile(_ tile: MahjongTile) {
         guard totalTileCount == requiredTileCountBeforeWin else { return }
+        if let sharedRonWinningTile, tile != sharedRonWinningTile { return }
+        guard selectableWinningTileSet.contains(tile) || draft.winningTile == tile else { return }
         guard handCount(for: tile) + openCount(for: tile) + (draft.winningTile == tile ? 0 : 1) <= 4 else {
             return
         }
         draft.winningTile = tile
-        draft.analysisResult = nil
+        draft.analysisResult = analyzeHand(forWinningTile: tile)
     }
 
     func updateActiveSectionForCurrentTileCount() {
         if totalTileCount == requiredTileCountBeforeWin {
             draft.activeSection = .winning
+            refreshWinningGuidance()
         } else if draft.activeSection == .winning {
             draft.activeSection = .concealed
+            draft.winningTile = nil
+            draft.analysisResult = nil
         }
+    }
+
+    func refreshWinningGuidance() {
+        guard totalTileCount == requiredTileCountBeforeWin else {
+            draft.analysisResult = nil
+            return
+        }
+
+        if let winningTile = draft.winningTile {
+            draft.analysisResult = analyzeHand(forWinningTile: winningTile)
+            return
+        }
+
+        if !winningTileCandidates.isEmpty {
+            draft.analysisResult = nil
+            return
+        }
+
+        var firstExplainableResult: PatternDetectionResult? = nil
+        for tile in sortedTilesForDisplay {
+            guard handCount(for: tile) + openCount(for: tile) < 4 else { continue }
+            guard let result = analyzeHand(forWinningTile: tile), result.yakuNames == ["无役"] else { continue }
+            firstExplainableResult = result
+            break
+        }
+
+        if let firstExplainableResult {
+            draft.analysisResult = firstExplainableResult
+        } else {
+            draft.analysisResult = PatternDetectionResult(
+                han: 0,
+                fu: 0,
+                yakuNames: ["无役"],
+                notes: ["当前手牌未识别到可和的牌型，请检查手牌结构或副露录入。"]
+            )
+        }
+    }
+
+    func refreshAnalysisAfterMetadataChange() {
+        if let winningTile = draft.winningTile {
+            draft.analysisResult = analyzeHand(forWinningTile: winningTile)
+        } else if totalTileCount == requiredTileCountBeforeWin {
+            refreshWinningGuidance()
+        } else {
+            draft.analysisResult = nil
+        }
+    }
+
+    func toggleCircumstantialYaku(_ yaku: CircumstantialYaku) {
+        if draft.selectedCircumstantialYaku.contains(yaku) {
+            draft.selectedCircumstantialYaku.remove(yaku)
+        } else {
+            draft.selectedCircumstantialYaku.insert(yaku)
+        }
+        refreshAnalysisAfterMetadataChange()
+    }
+
+    func shouldShowWinningButton(for tile: MahjongTile) -> Bool {
+        guard draft.activeSection == .winning,
+              totalTileCount == requiredTileCountBeforeWin else {
+            return false
+        }
+        if draft.winningTile == tile {
+            return selectableWinningTileSet.contains(tile)
+        }
+        return selectableWinningTileSet.contains(tile)
+    }
+
+    func shouldShowConcealedKanButton(for tile: MahjongTile) -> Bool {
+        draft.activeSection == .concealed && handCount(for: tile) == 4
+    }
+
+    func kongAdjustmentButtonTitle(for tile: MahjongTile) -> String? {
+        if openCount(for: tile) == 4 {
+            return "改为暗杠"
+        }
+        if handCount(for: tile) == 4, draft.concealedKanTiles.contains(tile) {
+            return "改为明杠"
+        }
+        return nil
+    }
+
+    func toggleConcealedKan(_ tile: MahjongTile) {
+        if draft.concealedKanTiles.contains(tile) {
+            draft.concealedKanTiles.remove(tile)
+        } else {
+            draft.concealedKanTiles.insert(tile)
+        }
+        draft.analysisResult = nil
+        updateActiveSectionForCurrentTileCount()
+    }
+
+    func toggleKongExposure(for tile: MahjongTile) {
+        if openCount(for: tile) == 4 {
+            draft.openCounts.removeValue(forKey: tile)
+            draft.handCounts[tile] = 4
+            draft.concealedKanTiles.insert(tile)
+        } else if handCount(for: tile) == 4, draft.concealedKanTiles.contains(tile) {
+            draft.concealedKanTiles.remove(tile)
+            draft.handCounts.removeValue(forKey: tile)
+            draft.openCounts[tile] = 4
+        } else {
+            return
+        }
+
+        rebuildOpenMeldGroups()
+        draft.analysisResult = nil
+        updateActiveSectionForCurrentTileCount()
     }
     
     func canAddTile(toConcealed: Bool, tile: MahjongTile) -> Bool {
-        if totalCount(for: tile) >= 4 {
+        if totalCount(for: tile) >= 4 || remainingCopiesForCurrentWinner(of: tile) <= 0 {
             return false
         }
         
@@ -2251,7 +3159,7 @@ struct HandPatternInputView: View {
         }
         
         let projectedKongCount =
-            projectedHandCounts.values.filter { $0 == 4 }.count +
+            draft.concealedKanTiles.count +
             projectedOpenCounts.values.filter { $0 == 4 }.count
         let projectedTileCount =
             projectedHandCounts.values.reduce(0, +) +
@@ -2280,726 +3188,113 @@ struct HandPatternInputView: View {
         
         draft.handCounts = sanitizedHandCounts
         draft.openCounts = sanitizedOpenCounts
+        draft.concealedKanTiles = Set(draft.concealedKanTiles.filter { sanitizedHandCounts[$0, default: 0] == 4 })
+        rebuildOpenMeldGroups()
         
         if let winningTile = draft.winningTile,
            handCount(for: winningTile) + openCount(for: winningTile) >= 4 {
+            draft.winningTile = nil
+        }
+        if let sharedRonWinningTile,
+           let winningTile = draft.winningTile,
+           winningTile != sharedRonWinningTile {
             draft.winningTile = nil
         }
         
         draft.analysisResult = nil
     }
     
-    func tilesForOpenMeld(from tile: MahjongTile, type: OpenMeldType) -> [MahjongTile]? {
-        switch type {
-        case .chi:
-            guard let suitIndex = tile.suitIndex, let number = tile.number, number <= 7 else {
-                return nil
-            }
-            let base = suitIndex * 9 + (number - 1)
-            guard let second = MahjongTile(rawValue: base + 1),
-                  let third = MahjongTile(rawValue: base + 2) else {
-                return nil
-            }
-            return [tile, second, third]
-            
-        case .pon:
-            return [tile, tile, tile]
-            
-        case .openKan, .concealedKan:
-            return [tile, tile, tile, tile]
-        }
-    }
-    
-    func canAddOpenMeld(_ tiles: [MahjongTile]) -> Bool {
-        let projectedHandCounts = draft.handCounts
-        var projectedOpenCounts = draft.openCounts
-        
-        for tile in tiles {
-            if handCount(for: tile) + openCount(for: tile) + (draft.winningTile == tile ? 1 : 0) >= 4 {
-                return false
-            }
-            projectedOpenCounts[tile, default: 0] += 1
-        }
-        
-        let projectedKongCount =
-            projectedHandCounts.values.filter { $0 == 4 }.count +
-            projectedOpenCounts.values.filter { $0 == 4 }.count
-        let projectedTileCount =
-            projectedHandCounts.values.reduce(0, +) +
-            projectedOpenCounts.values.reduce(0, +)
-        
-        return projectedTileCount <= 13 + projectedKongCount
-    }
-    
-    func canRemoveOpenMeld(_ tiles: [MahjongTile]) -> Bool {
-        var tempCounts = draft.openCounts
-        for tile in tiles {
-            guard tempCounts[tile, default: 0] > 0 else { return false }
-            tempCounts[tile, default: 0] -= 1
-        }
-        return true
-    }
-    
-    func analyzeHand() -> PatternDetectionResult? {
-        guard canAnalyze, let winningTile = draft.winningTile else { return nil }
-        
-        let fullCounts = combinedCounts(with: winningTile)
-        let context = HandAnalysisContext(openMeldGroups: draft.openMeldGroups)
-        guard let structuralCounts = structuralCountsForAnalysis(fullCounts, context: context) else {
-            return PatternDetectionResult(
-                han: 0,
-                fu: 0,
-                yakuNames: [],
-                notes: ["当前副露结构和牌张数不一致，请检查吃/碰/杠录入。"]
-            )
-        }
-        let hasOpenMelds = draft.openMeldGroups.contains { $0.type != .concealedKan }
-        
-        if !hasOpenMelds, let kokushiResult = kokushiDetectionResult(fullCounts: fullCounts, winningTile: winningTile) {
-            return applyBonusHan(to: kokushiResult)
-        }
-        
-        if totalKongCount == 4 {
-            return applyBonusHan(to: PatternDetectionResult(
-                han: 13,
-                fu: 0,
-                yakuNames: ["四杠子"],
-                notes: [
-                    "四杠子按役满处理。",
-                    "当前最小版本对四杠子的其他复合役未继续叠加。"
-                ],
-                yakumanMultiplier: 1
-            ))
-        }
-        
-        if !hasOpenMelds && isSevenPairs(structuralCounts) {
-            var yakuNames = ["七对子"]
-            var han = 2
-            let notes = ["七对子固定 25 符。", "这版牌型输入目前只按门前手识别。"]
-            
-            if winType == .tsumo {
-                yakuNames.append("门前清自摸和")
-                han += 1
-            }
-            
-            if isTanyao(fullCounts) {
-                yakuNames.append("断幺九")
-                han += 1
-            }
-            if isHonitsu(fullCounts) {
-                yakuNames.append("混一色")
-                han += 3
-            }
-            if isChinitsu(fullCounts) {
-                yakuNames.append("清一色")
-                han += 6
-            }
-            if han >= 13 {
-                return PatternDetectionResult(
-                    han: han,
-                    fu: 25,
-                    yakuNames: yakuNames,
-                    notes: ["按常见算え役満口径，累计 13 番以上按役满处理。"] + notes
-                )
-            }
-            return applyBonusHan(to: PatternDetectionResult(
-                han: han,
-                fu: 25,
-                yakuNames: yakuNames,
-                notes: notes
-            ))
-        }
-        
-        let candidates = standardHandCandidates(
-            counts: structuralCounts,
-            winningTile: winningTile.rawValue
-        )
-        guard !candidates.isEmpty else {
-            return PatternDetectionResult(
-                han: 0,
-                fu: 0,
-                yakuNames: [],
-                notes: ["当前未识别为可和的标准牌型。"]
-            )
-        }
-        
-        let analyses = candidates.compactMap { candidate in
-            analyzeCandidate(candidate, fullCounts: fullCounts, hasOpenMelds: hasOpenMelds, context: context)
-        }
-        
-        guard let best = analyses.max(by: { lhs, rhs in
-            if lhs.han == rhs.han {
-                return lhs.fu < rhs.fu
-            }
-            return lhs.han < rhs.han
-        }) else {
-            return nil
-        }
-        
-        return applyBonusHan(to: best)
-    }
-
-    func applyBonusHan(to result: PatternDetectionResult) -> PatternDetectionResult {
-        let bonusHan = draft.doraCount + draft.redDoraCount
-        guard bonusHan > 0 else {
-            return result
-        }
-        
-        if result.yakumanMultiplier > 0 {
-            return PatternDetectionResult(
-                han: result.han,
-                fu: result.fu,
-                yakuNames: result.yakuNames,
-                notes: result.notes + ["已记录宝牌 \(draft.doraCount) 番、红宝牌 \(draft.redDoraCount) 番；役满牌型不再额外叠加宝牌番数。"],
-                yakumanMultiplier: result.yakumanMultiplier
-            )
-        }
-        
-        var yakuNames = result.yakuNames
-        if draft.doraCount > 0 {
-            yakuNames.append("宝牌 x\(draft.doraCount)")
-        }
-        if draft.redDoraCount > 0 {
-            yakuNames.append("红宝牌 x\(draft.redDoraCount)")
-        }
-        
-        return PatternDetectionResult(
-            han: result.han + bonusHan,
-            fu: result.fu,
-            yakuNames: yakuNames,
-            notes: result.notes + ["已计入宝牌 \(draft.doraCount) 番、红宝牌 \(draft.redDoraCount) 番。"],
-            yakumanMultiplier: result.yakumanMultiplier
-        )
-    }
-    
-    func combinedCounts(with winningTile: MahjongTile) -> [Int] {
+    func rebuildOpenMeldGroups() {
         var counts = Array(repeating: 0, count: MahjongTile.allCases.count)
-        for (tile, count) in draft.handCounts {
+        for (tile, count) in draft.openCounts {
             counts[tile.rawValue] = count
         }
-        for (tile, count) in draft.openCounts {
-            counts[tile.rawValue] += count
-        }
-        counts[winningTile.rawValue] += 1
-        return counts
-    }
-    
-    func normalizedCountsForStructure(_ counts: [Int]) -> [Int] {
-        counts.map { min($0, 3) }
+        draft.openMeldGroups = deriveOpenMeldGroups(from: counts)
     }
 
-    func structuralCountsForAnalysis(_ counts: [Int], context: HandAnalysisContext) -> [Int]? {
-        var normalized = normalizedCountsForStructure(counts)
-        
-        for meld in context.openMeldGroups {
-            for tileIndex in meld.structuralTiles {
-                guard normalized.indices.contains(tileIndex), normalized[tileIndex] > 0 else {
-                    return nil
-                }
-                normalized[tileIndex] -= 1
+    func deriveOpenMeldGroups(from counts: [Int]) -> [OpenMeldGroup] {
+        allOpenMeldGroupOptions(from: counts).first ?? []
+    }
+
+    func allOpenMeldGroupOptions(from counts: [Int]) -> [[OpenMeldGroup]] {
+        var working = counts
+        var fixedGroups: [OpenMeldGroup] = []
+
+        for index in working.indices where working[index] == 4 {
+            if let tile = MahjongTile(rawValue: index) {
+                fixedGroups.append(OpenMeldGroup(type: .openKan, tiles: [tile, tile, tile, tile]))
+                working[index] = 0
             }
         }
-        
-        return normalized
-    }
-    
-    func isSevenPairs(_ counts: [Int]) -> Bool {
-        counts.filter { $0 == 2 }.count == 7
-    }
-    
-    func standardHandCandidates(
-        counts: [Int],
-        winningTile: Int
-    ) -> [StandardHandCandidate] {
-        var candidates: [StandardHandCandidate] = []
-        
-        for pairIndex in counts.indices where counts[pairIndex] >= 2 {
-            var remaining = counts
-            remaining[pairIndex] -= 2
-            var groups: [HandGroup] = []
-            var allGroupSets: [[HandGroup]] = []
-            buildGroups(counts: &remaining, current: &groups, results: &allGroupSets)
-            
-            for groupSet in allGroupSets {
-                let possibleWaits = waitKinds(
-                    pairTile: pairIndex,
-                    groups: groupSet,
-                    winningTile: winningTile
-                )
-                for wait in possibleWaits {
-                    candidates.append(
-                        StandardHandCandidate(
-                            pairTile: pairIndex,
-                            groups: groupSet,
-                            waitKind: wait
-                        )
-                    )
-                }
+
+        let remainderOptions = decomposeOpenRemainders(working)
+        if remainderOptions.isEmpty {
+            if working.contains(where: { $0 > 0 }) {
+                return []
             }
+            return [fixedGroups]
         }
-        
-        return candidates
+        return remainderOptions.map { fixedGroups + $0 }
     }
-    
-    func buildGroups(counts: inout [Int], current: inout [HandGroup], results: inout [[HandGroup]]) {
+
+    func decomposeOpenRemainders(_ counts: [Int]) -> [[OpenMeldGroup]] {
+        var mutableCounts = counts
+        return decomposeOpenRemainders(&mutableCounts)
+    }
+
+    func decomposeOpenRemainders(_ counts: inout [Int]) -> [[OpenMeldGroup]] {
         guard let firstIndex = counts.firstIndex(where: { $0 > 0 }) else {
-            results.append(current)
-            return
+            return [[]]
         }
-        
-        if counts[firstIndex] >= 3 {
+
+        var results: [[OpenMeldGroup]] = []
+
+        if counts[firstIndex] >= 3, let tile = MahjongTile(rawValue: firstIndex) {
             counts[firstIndex] -= 3
-            current.append(HandGroup(kind: .triplet, tiles: [firstIndex, firstIndex, firstIndex]))
-            buildGroups(counts: &counts, current: &current, results: &results)
-            current.removeLast()
+            for rest in decomposeOpenRemainders(&counts) {
+                results.append([OpenMeldGroup(type: .pon, tiles: [tile, tile, tile])] + rest)
+            }
             counts[firstIndex] += 3
         }
-        
+
         if firstIndex < 27 {
             let rank = firstIndex % 9
-            if rank <= 6, counts[firstIndex + 1] > 0, counts[firstIndex + 2] > 0 {
+            if rank <= 6,
+               counts[firstIndex + 1] > 0,
+               counts[firstIndex + 2] > 0,
+               let first = MahjongTile(rawValue: firstIndex),
+               let second = MahjongTile(rawValue: firstIndex + 1),
+               let third = MahjongTile(rawValue: firstIndex + 2) {
                 counts[firstIndex] -= 1
                 counts[firstIndex + 1] -= 1
                 counts[firstIndex + 2] -= 1
-                current.append(HandGroup(kind: .sequence, tiles: [firstIndex, firstIndex + 1, firstIndex + 2]))
-                buildGroups(counts: &counts, current: &current, results: &results)
-                current.removeLast()
+                for rest in decomposeOpenRemainders(&counts) {
+                    results.append([OpenMeldGroup(type: .chi, tiles: [first, second, third])] + rest)
+                }
                 counts[firstIndex] += 1
                 counts[firstIndex + 1] += 1
                 counts[firstIndex + 2] += 1
             }
         }
+
+        return results
     }
     
-    func waitKinds(pairTile: Int, groups: [HandGroup], winningTile: Int) -> [WaitKind] {
-        var waits: [WaitKind] = []
-        
-        if pairTile == winningTile {
-            waits.append(.tanki)
-        }
-        
-        for group in groups {
-            guard group.tiles.contains(winningTile) else { continue }
-            switch group.kind {
-            case .triplet:
-                waits.append(.shanpon)
-            case .sequence:
-                let start = group.tiles[0]
-                let startRank = start % 9 + 1
-                if winningTile == group.tiles[1] {
-                    waits.append(.kanchan)
-                } else if winningTile == group.tiles[0] {
-                    waits.append(startRank == 7 ? .penchan : .ryanmen)
-                } else if winningTile == group.tiles[2] {
-                    waits.append(startRank == 1 ? .penchan : .ryanmen)
-                }
-            }
-        }
-        
-        return waits.isEmpty ? [.shanpon] : waits
+    func analyzeHand() -> PatternDetectionResult? {
+        guard canAnalyze, let winningTile = draft.winningTile else { return nil }
+        return analyzeHand(forWinningTile: winningTile)
     }
-    
-    func analyzeCandidate(_ candidate: StandardHandCandidate, fullCounts: [Int], hasOpenMelds: Bool, context: HandAnalysisContext) -> PatternDetectionResult? {
-        var yakuNames: [String] = []
-        var han = 0
-        let allGroups = context.openHandGroups + candidate.groups
-        
-        if winType == .tsumo && !hasOpenMelds {
-            yakuNames.append("门前清自摸和")
-            han += 1
-        }
-        
-        if isTanyao(fullCounts) {
-            yakuNames.append("断幺九")
-            han += 1
-        }
-        
-        let yakuhaiCount = yakuhaiHan(allGroups)
-        if yakuhaiCount > 0 {
-            for _ in 0..<yakuhaiCount {
-                yakuNames.append("役牌")
-            }
-            han += yakuhaiCount
-        }
-        
-        if !hasOpenMelds && isPinfu(candidate) {
-            yakuNames.append("平和")
-            han += 1
-        }
-        
-        if !hasOpenMelds && isIipeikou(allGroups) {
-            yakuNames.append("一杯口")
-            han += 1
-        }
-        
-        if isToitoi(allGroups) {
-            yakuNames.append("对对和")
-            han += 2
-        }
-        
-        if totalKongCount == 3 {
-            yakuNames.append("三杠子")
-            han += 2
-        }
-        
-        if isSanshokuDoujun(allGroups) {
-            yakuNames.append("三色同顺")
-            han += hasOpenMelds ? 1 : 2
-        }
-        
-        if isIttsu(allGroups) {
-            yakuNames.append("一气通贯")
-            han += hasOpenMelds ? 1 : 2
-        }
-        
-        if isSanankou(candidate.groups) {
-            yakuNames.append("三暗刻")
-            han += 2
-        }
-        
-        if isShousangen(allGroups, pairTile: candidate.pairTile) {
-            yakuNames.append("小三元")
-            han += 2
-        }
-        
-        if !hasOpenMelds && isSuuankou(candidate.groups) {
-            let isSingleWait = candidate.waitKind == .tanki
-            return PatternDetectionResult(
-                han: isSingleWait ? 26 : 13,
-                fu: 0,
-                yakuNames: [isSingleWait ? "四暗刻单骑" : "四暗刻"],
-                notes: [isSingleWait ? "四暗刻单骑按双役满处理。" : "四暗刻按役满处理。"],
-                yakumanMultiplier: isSingleWait ? 2 : 1
-            )
-        }
-        
-        if isDaisangen(allGroups) {
-            return PatternDetectionResult(
-                han: 13,
-                fu: 0,
-                yakuNames: ["大三元"],
-                notes: ["大三元按役满处理。"],
-                yakumanMultiplier: 1
-            )
-        }
-        
-        if isTsuuiisou(fullCounts) {
-            return PatternDetectionResult(
-                han: 13,
-                fu: 0,
-                yakuNames: ["字一色"],
-                notes: ["字一色按役满处理。"],
-                yakumanMultiplier: 1
-            )
-        }
-        
-        if isChinroutou(fullCounts) {
-            return PatternDetectionResult(
-                han: 13,
-                fu: 0,
-                yakuNames: ["清老头"],
-                notes: ["清老头按役满处理。"],
-                yakumanMultiplier: 1
-            )
-        }
-        
-        if isShousuushii(allGroups, pairTile: candidate.pairTile) {
-            return PatternDetectionResult(
-                han: 13,
-                fu: 0,
-                yakuNames: ["小四喜"],
-                notes: ["小四喜按役满处理。"],
-                yakumanMultiplier: 1
-            )
-        }
-        
-        if isDaisuushii(allGroups) {
-            return PatternDetectionResult(
-                han: 26,
-                fu: 0,
-                yakuNames: ["大四喜"],
-                notes: ["大四喜按双役满处理。"],
-                yakumanMultiplier: 2
-            )
-        }
-        
-        if isHonitsu(fullCounts) {
-            yakuNames.append("混一色")
-            han += hasOpenMelds ? 2 : 3
-        }
-        
-        if isChinitsu(fullCounts) {
-            yakuNames.append("清一色")
-            han += hasOpenMelds ? 5 : 6
-        }
-        
-        if isHonroutou(fullCounts) {
-            yakuNames.append("混老头")
-            han += 2
-        }
-        
-        guard !yakuNames.isEmpty else {
-            return nil
-        }
-        
-        let fu = calculateFu(candidate, hasOpenMelds: hasOpenMelds, context: context)
-        var notes = [
-            hasOpenMelds ? "当前副露版仍是简化识别，明暗刻与杠的符数建议回正式算分页手动复核。" : "当前最小版本只按门前手识别，未自动计入立直、一发、宝牌、里宝牌、杠宝牌。",
-            "累计 13 番以上按常见算え役満口径处理。"
-        ]
-        
-        if han >= 13 {
-            notes.append("这手按累计役满口径结算。")
-        }
-        
-        return PatternDetectionResult(
-            han: han,
-            fu: fu,
-            yakuNames: yakuNames,
-            notes: notes
+
+    func analyzeHand(forWinningTile winningTile: MahjongTile) -> PatternDetectionResult? {
+        let analyzer = HandPatternAnalyzer(
+            draft: draft,
+            winType: winType,
+            selectedCircumstantialYaku: draft.selectedCircumstantialYaku,
+            seatWindIndex: seatWindTileIndex(),
+            roundWindIndex: roundWindTileIndex(),
+            riichiYaku: draft.riichiYaku
         )
-    }
-    
-    func calculateFu(_ candidate: StandardHandCandidate, hasOpenMelds: Bool, context: HandAnalysisContext) -> Int {
-        if !hasOpenMelds && isPinfu(candidate) && winType == .tsumo {
-            return 20
-        }
-        
-        var fu = 20
-        if winType == .tsumo && !hasOpenMelds {
-            fu += 2
-        } else if !hasOpenMelds {
-            fu += 10
-        }
-        
-        if isValuePair(candidate.pairTile) {
-            fu += 2
-        }
-        
-        for group in context.openHandGroups where group.kind == .triplet {
-            let tile = MahjongTile(rawValue: group.tiles[0])!
-            if isOpenKongTile(group.tiles[0]) {
-                fu += tile.isTerminalOrHonor ? 16 : 8
-            } else {
-                fu += tile.isTerminalOrHonor ? 4 : 2
-            }
-        }
-        
-        for group in candidate.groups where group.kind == .triplet {
-            let tile = MahjongTile(rawValue: group.tiles[0])!
-            if isConcealedKongTile(group.tiles[0]) {
-                fu += tile.isTerminalOrHonor ? 32 : 16
-            } else if isOpenKongTile(group.tiles[0]) {
-                fu += tile.isTerminalOrHonor ? 16 : 8
-            } else {
-                fu += tile.isTerminalOrHonor ? (hasOpenMelds ? 4 : 8) : (hasOpenMelds ? 2 : 4)
-            }
-        }
-        
-        switch candidate.waitKind {
-        case .tanki, .kanchan, .penchan:
-            fu += 2
-        case .ryanmen, .shanpon:
-            break
-        }
-        
-        if !hasOpenMelds && isPinfu(candidate) && winType == .ron {
-            return 30
-        }
-        
-        return ((fu + 9) / 10) * 10
-    }
-    
-    func isPinfu(_ candidate: StandardHandCandidate) -> Bool {
-        candidate.groups.allSatisfy { $0.kind == .sequence }
-            && !isValuePair(candidate.pairTile)
-            && candidate.waitKind == .ryanmen
-    }
-    
-    func isIipeikou(_ groups: [HandGroup]) -> Bool {
-        let sequences = groups
-            .filter { $0.kind == .sequence }
-            .map { $0.tiles }
-        var seen: [[Int]: Int] = [:]
-        for sequence in sequences {
-            seen[sequence, default: 0] += 1
-        }
-        return seen.values.contains(where: { $0 >= 2 })
-    }
-    
-    func isToitoi(_ groups: [HandGroup]) -> Bool {
-        groups.allSatisfy { $0.kind == .triplet }
-    }
-    
-    func isSanshokuDoujun(_ groups: [HandGroup]) -> Bool {
-        let starts = groups
-            .filter { $0.kind == .sequence }
-            .compactMap { group -> (Int, Int)? in
-                guard let tile = MahjongTile(rawValue: group.tiles[0]),
-                      let suit = tile.suitIndex,
-                      let number = tile.number else { return nil }
-                return (number, suit)
-            }
-        
-        for number in 1...7 {
-            let suits = starts.filter { $0.0 == number }.map { $0.1 }
-            if Set(suits) == Set([0, 1, 2]) {
-                return true
-            }
-        }
-        return false
-    }
-    
-    func isIttsu(_ groups: [HandGroup]) -> Bool {
-        let sequences = groups.filter { $0.kind == .sequence }
-        for suit in 0...2 {
-            let needed = Set([1, 4, 7])
-            let starts = Set(sequences.compactMap { group -> Int? in
-                guard let tile = MahjongTile(rawValue: group.tiles[0]),
-                      tile.suitIndex == suit else { return nil }
-                return tile.number
-            })
-            if needed.isSubset(of: starts) {
-                return true
-            }
-        }
-        return false
-    }
-    
-    func isSanankou(_ concealedGroups: [HandGroup]) -> Bool {
-        concealedGroups.filter { $0.kind == .triplet }.count >= 3
-    }
-    
-    func isSuuankou(_ concealedGroups: [HandGroup]) -> Bool {
-        concealedGroups.filter { $0.kind == .triplet }.count == 4
-    }
-    
-    func isShousangen(_ groups: [HandGroup], pairTile: Int) -> Bool {
-        let dragonTriplets = groups.filter { $0.kind == .triplet && isDragonTile($0.tiles[0]) }.count
-        return dragonTriplets == 2 && isDragonTile(pairTile)
-    }
-    
-    func isDaisangen(_ groups: [HandGroup]) -> Bool {
-        let dragonSet = Set(groups.filter { $0.kind == .triplet }.map { $0.tiles[0] }).intersection([
-            MahjongTile.white.rawValue,
-            MahjongTile.green.rawValue,
-            MahjongTile.red.rawValue
-        ])
-        return dragonSet.count == 3
-    }
-    
-    func isTsuuiisou(_ counts: [Int]) -> Bool {
-        counts.indices.allSatisfy { index in
-            counts[index] == 0 || MahjongTile(rawValue: index)!.isHonor
-        }
-    }
-    
-    func isChinroutou(_ counts: [Int]) -> Bool {
-        counts.indices.allSatisfy { index in
-            counts[index] == 0 || MahjongTile(rawValue: index)!.isTerminal
-        }
-    }
-    
-    func isShousuushii(_ groups: [HandGroup], pairTile: Int) -> Bool {
-        let windTriplets = groups.filter { $0.kind == .triplet && isWindTile($0.tiles[0]) }.count
-        return windTriplets == 3 && isWindTile(pairTile)
-    }
-    
-    func isDaisuushii(_ groups: [HandGroup]) -> Bool {
-        let windSet = Set(groups.filter { $0.kind == .triplet }.map { $0.tiles[0] }).intersection([
-            MahjongTile.east.rawValue,
-            MahjongTile.south.rawValue,
-            MahjongTile.west.rawValue,
-            MahjongTile.north.rawValue
-        ])
-        return windSet.count == 4
-    }
-    
-    func isTanyao(_ counts: [Int]) -> Bool {
-        for index in counts.indices where counts[index] > 0 {
-            let tile = MahjongTile(rawValue: index)!
-            if tile.isTerminalOrHonor {
-                return false
-            }
-        }
-        return true
-    }
-    
-    func isHonitsu(_ counts: [Int]) -> Bool {
-        let suits = Set(counts.indices.compactMap { index -> Int? in
-            guard counts[index] > 0 else { return nil }
-            return MahjongTile(rawValue: index)?.suitIndex
-        })
-        let hasHonor = counts.indices.contains { index in
-            counts[index] > 0 && MahjongTile(rawValue: index)!.isHonor
-        }
-        return suits.count == 1 && hasHonor
-    }
-    
-    func isChinitsu(_ counts: [Int]) -> Bool {
-        let suits = Set(counts.indices.compactMap { index -> Int? in
-            guard counts[index] > 0 else { return nil }
-            return MahjongTile(rawValue: index)?.suitIndex
-        })
-        let hasHonor = counts.indices.contains { index in
-            counts[index] > 0 && MahjongTile(rawValue: index)!.isHonor
-        }
-        return suits.count == 1 && !hasHonor
-    }
-    
-    func isHonroutou(_ counts: [Int]) -> Bool {
-        for index in counts.indices where counts[index] > 0 {
-            let tile = MahjongTile(rawValue: index)!
-            if !tile.isTerminalOrHonor {
-                return false
-            }
-        }
-        return true
-    }
-    
-    func yakuhaiHan(_ groups: [HandGroup]) -> Int {
-        groups.reduce(0) { partialResult, group in
-            guard group.kind == .triplet else { return partialResult }
-            let tileIndex = group.tiles[0]
-            return partialResult + valueTileHan(for: tileIndex)
-        }
-    }
-    
-    func valueTileHan(for tileIndex: Int) -> Int {
-        guard let tile = MahjongTile(rawValue: tileIndex) else { return 0 }
-        
-        switch tile {
-        case .white, .green, .red:
-            return 1
-        case .east, .south, .west, .north:
-            var han = 0
-            if seatWindTileIndex() == tileIndex {
-                han += 1
-            }
-            if roundWindTileIndex() == tileIndex {
-                han += 1
-            }
-            return han
-        default:
-            return 0
-        }
-    }
-    
-    func isDragonTile(_ tileIndex: Int) -> Bool {
-        tileIndex == MahjongTile.white.rawValue
-            || tileIndex == MahjongTile.green.rawValue
-            || tileIndex == MahjongTile.red.rawValue
-    }
-    
-    func isWindTile(_ tileIndex: Int) -> Bool {
-        tileIndex == MahjongTile.east.rawValue
-            || tileIndex == MahjongTile.south.rawValue
-            || tileIndex == MahjongTile.west.rawValue
-            || tileIndex == MahjongTile.north.rawValue
-    }
-    
-    func isValuePair(_ tileIndex: Int) -> Bool {
-        valueTileHan(for: tileIndex) > 0
+        return analyzer.analyze(winningTile: winningTile)
     }
     
     func seatWindTileIndex() -> Int {
@@ -3013,66 +3308,5 @@ struct HandPatternInputView: View {
     
     func roundWindTileIndex() -> Int {
         game.roundWindIndex == 0 ? MahjongTile.east.rawValue : MahjongTile.south.rawValue
-    }
-    
-    func isConcealedKongTile(_ tileIndex: Int) -> Bool {
-        guard let tile = MahjongTile(rawValue: tileIndex) else { return false }
-        return draft.handCounts[tile, default: 0] == 4
-            || draft.openMeldGroups.contains(where: { $0.type == .concealedKan && $0.tiles.allSatisfy { $0 == tile } })
-    }
-    
-    func isOpenKongTile(_ tileIndex: Int) -> Bool {
-        guard let tile = MahjongTile(rawValue: tileIndex) else { return false }
-        return draft.openMeldGroups.contains(where: { $0.type == .openKan && $0.tiles.allSatisfy { $0 == tile } })
-    }
-    
-    func kokushiDetectionResult(fullCounts: [Int], winningTile: MahjongTile) -> PatternDetectionResult? {
-        let yaochuIndices = [
-            MahjongTile.man1.rawValue, MahjongTile.man9.rawValue,
-            MahjongTile.pin1.rawValue, MahjongTile.pin9.rawValue,
-            MahjongTile.sou1.rawValue, MahjongTile.sou9.rawValue,
-            MahjongTile.east.rawValue, MahjongTile.south.rawValue,
-            MahjongTile.west.rawValue, MahjongTile.north.rawValue,
-            MahjongTile.white.rawValue, MahjongTile.green.rawValue,
-            MahjongTile.red.rawValue
-        ]
-        
-        for index in fullCounts.indices where fullCounts[index] > 0 && !yaochuIndices.contains(index) {
-            return nil
-        }
-        
-        guard yaochuIndices.allSatisfy({ fullCounts[$0] >= 1 }) else {
-            return nil
-        }
-        
-        let pairCount = yaochuIndices.filter { fullCounts[$0] >= 2 }.count
-        guard pairCount == 1 else {
-            return nil
-        }
-        
-        let concealedCounts = combinedCountsBeforeWinningTile()
-        let isThirteenSided = yaochuIndices.allSatisfy({ concealedCounts[$0] == 1 }) && yaochuIndices.contains(winningTile.rawValue)
-        
-        return PatternDetectionResult(
-            han: isThirteenSided ? 26 : 13,
-            fu: 0,
-            yakuNames: [isThirteenSided ? "国士无双十三面" : "国士无双"],
-            notes: [
-                isThirteenSided ? "已识别为国士无双十三面。" : "已识别为国士无双。",
-                isThirteenSided ? "国士无双十三面按双役满处理。" : "国士无双按役满处理。"
-            ],
-            yakumanMultiplier: isThirteenSided ? 2 : 1
-        )
-    }
-    
-    func combinedCountsBeforeWinningTile() -> [Int] {
-        var counts = Array(repeating: 0, count: MahjongTile.allCases.count)
-        for (tile, count) in draft.handCounts {
-            counts[tile.rawValue] = count
-        }
-        for (tile, count) in draft.openCounts {
-            counts[tile.rawValue] += count
-        }
-        return counts
     }
 }

@@ -1,0 +1,19 @@
+.DS_Store
+
+# Xcode user and build artifacts
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Swift Package Manager
+.build/
+
+# Python / misc local envs
+.venv/
+.venv311/
+
+# Local caches
+.deriveddata/
+.deriveddata_ios/
+.ultralytics/
